@@ -1,0 +1,24 @@
+# Permissions for commands defined by this application (not by a plugin).
+# Once an app ACL manifest exists, Tauri checks *every* app command, so the
+# bundled UI must be granted its commands explicitly as well.
+
+[[permission]]
+identifier = "allow-main-commands"
+description = "Enables the app commands used by the bundled Foxnest UI."
+commands.allow = [
+  "fetch_url",
+  "open_verification_window",
+  "close_verification_window",
+  "is_feed_verified",
+  "clear_verified_feed",
+  "save_feed_token",
+  "get_feed_token",
+  "delete_feed_token",
+]
+
+[[permission]]
+identifier = "allow-save-verified-feed"
+description = "Enables the remote verification WebView to hand captured RSS/Atom XML back to the app."
+commands.allow = [
+  "save_verified_feed",
+]

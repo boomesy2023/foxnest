@@ -1,0 +1,17 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "verification-window",
+  "description": "Allow the anti-bot verification window to hand captured feed content back to the app. Scoped to that window and to remote origins only, with a single command.",
+  "windows": [
+    "verification"
+  ],
+  "local": false,
+  "remote": {
+    "urls": [
+      "https://*"
+    ]
+  },
+  "permissions": [
+    "allow-save-verified-feed"
+  ]
+}

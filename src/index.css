@@ -1,0 +1,286 @@
+@import "tailwindcss";
+
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  color-scheme: light;
+  --bg: #f7f7f5;
+  --surface: #ffffff;
+  --border: #e6e6e2;
+  --text: #1d1d1b;
+  --muted: #6b6b66;
+  --accent: #b4532a;
+  --accent-soft: #f7ece6;
+}
+
+.dark {
+  color-scheme: dark;
+  --bg: #171715;
+  --surface: #21211e;
+  --border: #34342f;
+  --text: #ecece7;
+  --muted: #9c9c95;
+  --accent: #e08a5f;
+  --accent-soft: #3a2a20;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--accent-soft);
+}
+
+button {
+  cursor: pointer;
+}
+
+input,
+select {
+  font: inherit;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+  background-clip: padding-box;
+}
+
+/* Sanitized full-text article rendering. Colors follow the active theme. */
+.article-body {
+  font-size: 15px;
+  line-height: 1.85;
+  color: var(--text);
+  overflow-wrap: break-word;
+}
+.article-body p {
+  margin: 0 0 1.1em;
+}
+.article-body h1,
+.article-body h2,
+.article-body h3,
+.article-body h4 {
+  line-height: 1.4;
+  margin: 1.5em 0 0.6em;
+  font-weight: 600;
+}
+.article-body h1 { font-size: 1.4em; }
+.article-body h2 { font-size: 1.25em; }
+.article-body h3 { font-size: 1.1em; }
+.article-body a {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.article-body img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 1.2em auto;
+  border-radius: 6px;
+}
+.article-body figure {
+  margin: 1.4em 0;
+}
+.article-body figcaption {
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 0.5em;
+}
+.article-body blockquote {
+  margin: 1.2em 0;
+  padding: 0.4em 0 0.4em 1em;
+  border-left: 3px solid var(--accent);
+  background: var(--accent-soft);
+  color: var(--muted);
+}
+.article-body pre {
+  overflow-x: auto;
+  padding: 0.9em 1em;
+  border-radius: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.article-body code {
+  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
+.article-body :not(pre) > code {
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+}
+.article-body ul,
+.article-body ol {
+  margin: 0 0 1.1em;
+  padding-left: 1.6em;
+}
+.article-body li {
+  margin: 0.3em 0;
+}
+.article-body hr {
+  border: none;
+  border-top: 1px solid var(--border);
+  margin: 1.8em 0;
+}
+.article-body table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1.2em 0;
+  font-size: 13px;
+}
+.article-body th,
+.article-body td {
+  border: 1px solid var(--border);
+  padding: 0.5em 0.7em;
+  text-align: left;
+}
+
+/* Feed-provided daily digests: a date line plus an ordered list of stories.
+   Render each story as its own card with a numbered badge. */
+.digest-body {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.8;
+  overflow-wrap: break-word;
+}
+.digest-body > p:first-child {
+  display: inline-block;
+  margin: 0 0 1.3em;
+  padding: 4px 12px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+.digest-body ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  counter-reset: digest;
+}
+.digest-body ol > li {
+  counter-increment: digest;
+  position: relative;
+  margin: 0 0 14px;
+  padding: 17px 18px 16px 52px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.digest-body ol > li::before {
+  content: counter(digest);
+  position: absolute;
+  top: 17px;
+  left: 16px;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1;
+}
+.digest-body li > p {
+  margin: 0;
+}
+.digest-body li > p:first-child {
+  margin-bottom: 8px;
+}
+.digest-body li > p:first-child > a {
+  display: block;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.5;
+  text-decoration: none;
+  cursor: pointer;
+}
+.digest-body li > p:first-child > a:hover {
+  color: var(--accent);
+}
+.digest-body li > p:not(:first-child) {
+  color: var(--muted);
+  font-size: 13px;
+}
+.digest-body img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0.8em 0;
+  border-radius: 6px;
+}
+
+/* Podcast player seek rail */
+.podcast-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 5px;
+  border-radius: 999px;
+  cursor: pointer;
+}
+.podcast-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.podcast-range:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* Podcast chapter links inside shownotes seek the player instead of opening
+   a browser tab, so make them look actionable. */
+.digest-body li > a[href*="#t="] {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-decoration: none;
+}
+.digest-body li > a[href*="#t="]:hover {
+  filter: brightness(0.95);
+}
