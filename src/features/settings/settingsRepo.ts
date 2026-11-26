@@ -18,6 +18,8 @@ export async function loadSettings(): Promise<Settings> {
   };
   const strength = (map.get("aggregationStrength") ??
     DEFAULT_SETTINGS.aggregationStrength) as Settings["aggregationStrength"];
+  const translationEngine = (map.get("translationEngine") ??
+    DEFAULT_SETTINGS.translationEngine) as Settings["translationEngine"];
 
   return {
     aggregationStrength: ["conservative", "normal", "aggressive"].includes(strength)
@@ -28,6 +30,13 @@ export async function loadSettings(): Promise<Settings> {
     entityOverlapThreshold: num("entityOverlapThreshold", DEFAULT_SETTINGS.entityOverlapThreshold),
     theme: (map.get("theme") ?? DEFAULT_SETTINGS.theme) as Settings["theme"],
     convertTraditional: map.get("convertTraditional") !== "false",
+    autoRefreshMinutes: num("autoRefreshMinutes", DEFAULT_SETTINGS.autoRefreshMinutes),
+    translationEnabled: map.get("translationEnabled") !== "false",
+    translationEngine: ["dictionary", "openai", "ollama"].includes(translationEngine)
+      ? translationEngine
+      : DEFAULT_SETTINGS.translationEngine,
+    translationBaseUrl: map.get("translationBaseUrl") ?? DEFAULT_SETTINGS.translationBaseUrl,
+    translationModel: map.get("translationModel") ?? DEFAULT_SETTINGS.translationModel,
   };
 }
 

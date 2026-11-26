@@ -26,20 +26,12 @@ function TopicCard({ topic, allTopics }: { topic: TopicWithArticles; allTopics: 
     () => Array.from(new Set(topic.articles.map((a) => a.feedTitle))),
     [topic.articles],
   );
-  const lead = topic.articles[0];
 
   return (
     <div className="rounded-lg border border-[var(--border)] bg-[var(--surface)] transition-colors hover:border-[var(--accent)]/40">
       <button
         className="flex w-full items-start gap-3 px-4 py-3 text-left"
-        onClick={() => {
-          toggleTopic(topic.id);
-          if (lead) {
-            setPage("reader");
-            selectArticle(lead.id);
-            void markTopicAsRead(topic.id, lead.id);
-          }
-        }}
+        onClick={() => toggleTopic(topic.id)}
       >
         <span className="mt-0.5 text-[var(--muted)]">
           {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
@@ -138,15 +130,6 @@ export function TopicView() {
 
   return (
     <section className="flex h-full min-h-0 flex-col">
-      <header className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-        <div>
-          <h2 className="text-sm font-medium">话题归集</h2>
-          <p className="mt-0.5 text-[11px] text-[var(--muted)]">
-            跨订阅源聚合 · 同一事件的多家报道
-          </p>
-        </div>
-        <span className="text-xs text-[var(--muted)]">{discussionTopics.length} 个话题</span>
-      </header>
       <div className={cn("min-h-0 flex-1 space-y-2 overflow-y-auto p-3")}>
         {discussionTopics.length === 0 ? (
           <p className="px-4 py-10 text-center text-[var(--muted)]">

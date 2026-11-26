@@ -1,24 +1,22 @@
 import { create } from "zustand";
-import type { AggregationStrength, Article, ArticleFilter, Feed, Settings, TopicWithArticles } from "../types";
+import type { AggregationStrength, Article, ArticleFilter, Feed, NoteWithArticle, Settings, TopicWithArticles, TranslationEngine } from "../types";
 import { DEFAULT_SETTINGS, STRENGTH_PRESETS } from "../types";
 import { listFeeds, insertFeed, updateFeed, deleteFeed as repoDeleteFeed } from "../features/feeds/feedRepo";
 import { refreshFeed } from "../features/feeds/apiClients";
 import { exportOpml, importOpml } from "../features/feeds/opml";
-import { listArticles, setArticleRead, setArticleStarred } from "../features/articles/articleRepo";
-import { listTopicsWithArticles, mergeTopics, deleteTopic, removeArticleFromTopic } from "../features/clustering/topicRepo";
+import { getArticle, listArticles, setArticleRead, setArticleStarred } from "../features/articles/articleRepo";
+import { deleteNote, insertNote, listNotes } from "../features/notes/noteRepo";
+import { deleteTopic, removeArticleFromTopic, saveManualTopic } from "../features/clustering/topicRepo";
 import { clusterArticle, reclusterAll } from "../features/clustering/clusterEngine";
-import { getSetting, loadSettings, saveSettings, setSetting } from "../features/settings/settingsRepo";
+import { loadSettings, saveSettings } from "../features/settings/settingsRepo";
 import { makeId } from "../lib/utils";
-import { closeVerificationWindow, isFeedVerified, openVerificationWindow } from "../lib/db";
+import { closeVerificationWindow, deleteTranslationApiKey, isFeedVerified, openVerificationWindow, saveTranslationApiKey } from "../lib/db";
 
 // Guard against overlapping refreshes. Two concurrent fetches of the same feed
 // both see "no existing article" before either inserts, producing duplicates.
 let refreshInFlight = false;
 
-/** Bump this when the clustering rules change so existing data is rebuilt. */
-const CLUSTER_ENGINE_VERSION = "strict-anchor-v3";
-
-export type Page = "reader" | "topics" | "feeds" | "settings";
+export type Page = "reader" | "notes" | "topics" | "feeds" | "settings";
 
 interface RefreshReport {
   feedTitle: string;
@@ -31,6 +29,7 @@ interface AppState {
   feeds: Feed[];
   articles: Article[];
   topics: TopicWithArticles[];
+  notes: NoteWithArticle[];
   settings: Settings;
   page: Page;
   activeFilter: ArticleFilter;
@@ -40,6 +39,7 @@ interface AppState {
   expandedTopicId: string | null;
   loading: boolean;
   busy: boolean;
+  refreshingFeedId: string | null;
   fullTextLoadingId: string | null;
   toast: string | null;
   reports: RefreshReport[];
@@ -61,10 +61,19 @@ interface AppState {
   toggleRead: (id: string) => Promise<void>;
   markTopicAsRead: (topicId: string, keepArticleId?: string) => Promise<void>;
   toggleStarred: (id: string) => Promise<void>;
+  addNote: (articleId: string, quote: string) => Promise<void>;
+  deleteNote: (id: string) => Promise<void>;
+  openNote: (id: string) => Promise<void>;
   setStrength: (strength: AggregationStrength) => Promise<void>;
   setTimeWindow: (hours: number) => Promise<void>;
   setTheme: (theme: Settings["theme"]) => Promise<void>;
   setConvertTraditional: (enabled: boolean) => Promise<void>;
+  setAutoRefreshMinutes: (minutes: number) => Promise<void>;
+  setTranslationEnabled: (enabled: boolean) => Promise<void>;
+  setTranslationEngine: (engine: TranslationEngine) => Promise<void>;
+  updateTranslationConfig: (input: { baseUrl: string; model: string }) => Promise<void>;
+  saveTranslationKey: (key: string) => Promise<void>;
+  clearTranslationKey: () => Promise<void>;
   splitArticleFromTopic: (topicId: string, articleId: string) => Promise<void>;
   mergeTopicInto: (sourceId: string, targetId: string) => Promise<void>;
   removeTopic: (topicId: string) => Promise<void>;
@@ -75,6 +84,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   feeds: [],
   articles: [],
   topics: [],
+  notes: [],
   settings: DEFAULT_SETTINGS,
   page: "reader",
   activeFilter: { type: "all" },
@@ -83,6 +93,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   expandedTopicId: null,
   loading: false,
   busy: false,
+  refreshingFeedId: null,
   fullTextLoadingId: null,
   toast: null,
   reports: [],
@@ -90,23 +101,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   initialize: async () => {
     set({ loading: true });
     try {
-      const [feeds, articles, topics, settings, clusterVersion] = await Promise.all([
+      const [feeds, articles, notes, settings] = await Promise.all([
         listFeeds(),
         listArticles(),
-        listTopicsWithArticles(),
+        listNotes(),
         loadSettings(),
-        getSetting("clusterEngineVersion"),
       ]);
+      const { topics } = await reclusterAll(settings, articles);
 
-      let nextArticles = articles;
-      let nextTopics = topics;
-      if (clusterVersion !== CLUSTER_ENGINE_VERSION) {
-        await reclusterAll(settings, articles);
-        await setSetting("clusterEngineVersion", CLUSTER_ENGINE_VERSION);
-        [nextArticles, nextTopics] = await Promise.all([listArticles(), listTopicsWithArticles()]);
-      }
-
-      set({ feeds, articles: nextArticles, topics: nextTopics, settings });
+      set({ feeds, articles, topics, notes, settings });
       applyTheme(settings.theme);
     } catch (error) {
       set({ toast: `初始化失败：${errorText(error)}` });
@@ -195,12 +198,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       return;
     }
     refreshInFlight = true;
-    set({ busy: true, reports: [] });
+    set({ busy: true, refreshingFeedId: null, reports: [] });
     const reports: RefreshReport[] = [];
     const settings = get().settings;
-    let topics: Awaited<ReturnType<typeof listTopicsWithArticles>> = [];
+    let topics = get().topics;
     try {
-      topics = await listTopicsWithArticles();
       for (const feed of feeds) {
         let result;
         try {
@@ -216,22 +218,21 @@ export const useAppStore = create<AppState>((set, get) => ({
             (a) => a.feedId === feed.id && !get().articles.some((old) => old.id === a.id),
           );
           for (const article of newOnes) {
-            await clusterArticle(article, settings, topics);
-            topics = await listTopicsWithArticles();
+            const decision = await clusterArticle(article, settings, topics);
+            topics = decision.topics;
           }
         }
       }
-      const [articles, updatedFeeds, updatedTopics] = await Promise.all([
+      const [articles, updatedFeeds] = await Promise.all([
         listArticles(),
         listFeeds(),
-        listTopicsWithArticles(),
       ]);
       const totalAdded = reports.reduce((sum, report) => sum + report.added, 0);
       const failed = reports.filter((r) => r.error);
       set({
         articles,
         feeds: updatedFeeds,
-        topics: updatedTopics,
+        topics,
         toast: failed.length > 0
           ? `${failed.length} 个源更新失败：${failed[0].error}`
           : `已更新 ${reports.length} 个订阅源，新增 ${totalAdded} 篇文章`,
@@ -241,7 +242,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     } finally {
       // Always release both flags, even on error, so the UI never sticks.
       refreshInFlight = false;
-      set({ busy: false });
+      set({ busy: false, refreshingFeedId: null });
     }
   },
 
@@ -250,7 +251,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const feed = get().feeds.find((item) => item.id === id);
     if (!feed) return;
     refreshInFlight = true;
-    set({ busy: true });
+    set({ busy: true, refreshingFeedId: id });
     try {
       let result;
       try {
@@ -258,17 +259,17 @@ export const useAppStore = create<AppState>((set, get) => ({
       } catch (error) {
         result = { added: 0, duplicates: 0, total: 0, error: errorText(error) };
       }
+      let topics = get().topics;
       if (result.added > 0) {
         const settings = get().settings;
-        const [fresh, topics] = await Promise.all([listArticles(), listTopicsWithArticles()]);
+        const fresh = await listArticles();
         const newOnes = fresh.filter((a) => a.feedId === id && !get().articles.some((old) => old.id === a.id));
-        let working = topics;
         for (const article of newOnes) {
-          await clusterArticle(article, settings, working);
-          working = await listTopicsWithArticles();
+          const decision = await clusterArticle(article, settings, topics);
+          topics = decision.topics;
         }
       }
-      const [articles, feeds, topics] = await Promise.all([listArticles(), listFeeds(), listTopicsWithArticles()]);
+      const [articles, feeds] = await Promise.all([listArticles(), listFeeds()]);
       set({
         articles,
         feeds,
@@ -281,7 +282,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ toast: `刷新失败：${errorText(error)}` });
     } finally {
       refreshInFlight = false;
-      set({ busy: false });
+      set({ busy: false, refreshingFeedId: null });
     }
   },
 
@@ -342,10 +343,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     const current = get().activeFilter;
     const nextFilter: ArticleFilter =
       current.type === "feed" && current.id === id ? { type: "all" } : current;
+    const deletedArticleIds = new Set(
+      get().articles.filter((article) => article.feedId === id).map((article) => article.id),
+    );
+    const topics = get().topics
+      .map((topic) => ({
+        ...topic,
+        articles: topic.articles.filter((article) => !deletedArticleIds.has(article.id)),
+      }))
+      .filter((topic) => topic.articles.length > 0);
     set({
       feeds: await listFeeds(),
       articles: await listArticles(),
-      topics: await listTopicsWithArticles(),
+      topics,
+      notes: await listNotes(),
       activeFilter: nextFilter,
       toast: "订阅源已删除",
     });
@@ -403,6 +414,51 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ articles: get().articles.map((item) => (item.id === id ? { ...item, isStarred: next } : item)) });
   },
 
+  addNote: async (articleId, quote) => {
+    const text = quote.trim();
+    if (!text) return;
+    try {
+      await insertNote({ id: makeId("n_"), articleId, quote: text, createdAt: Date.now() });
+      set({ notes: await listNotes(), toast: "已保存为笔记" });
+    } catch (error) {
+      set({ toast: `笔记保存失败：${errorText(error)}` });
+    }
+  },
+
+  deleteNote: async (id) => {
+    try {
+      await deleteNote(id);
+      set({ notes: get().notes.filter((note) => note.id !== id), toast: "笔记已删除" });
+    } catch (error) {
+      set({ toast: `笔记删除失败：${errorText(error)}` });
+    }
+  },
+
+  openNote: async (id) => {
+    const note = get().notes.find((item) => item.id === id);
+    if (!note) return;
+    try {
+      const existing = get().articles.find((item) => item.id === note.articleId);
+      const article = existing ?? await getArticle(note.articleId);
+      if (!article) {
+        set({ notes: await listNotes(), toast: "这篇原文已被删除" });
+        return;
+      }
+      set({
+        page: "reader",
+        activeFilter: { type: "all" },
+        selectedArticleId: article.id,
+        unreadSessionReadIds: new Set<string>(),
+        articles: get().articles.some((item) => item.id === article.id)
+          ? get().articles
+          : [article, ...get().articles],
+      });
+      get().selectArticle(article.id);
+    } catch (error) {
+      set({ toast: `打开原文失败：${errorText(error)}` });
+    }
+  },
+
   setStrength: async (strength) => {
     const settings = {
       ...get().settings,
@@ -414,8 +470,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const result = await reclusterAll(settings, get().articles);
       set({
-        topics: await listTopicsWithArticles(),
-        toast: `已按${strength === "aggressive" ? "激进" : strength === "normal" ? "标准" : "保守"}强度重新归集：${result.topics} 个话题`,
+        topics: result.topics,
+        toast: `已按${strength === "aggressive" ? "激进" : strength === "normal" ? "标准" : "保守"}强度重新归集：${result.topics.length} 个话题`,
       });
     } catch (error) {
       set({ toast: `重新归集失败：${errorText(error)}` });
@@ -429,8 +485,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     await saveSettings(settings);
     set({ settings, busy: true });
     try {
-      await reclusterAll(settings, get().articles);
-      set({ topics: await listTopicsWithArticles(), toast: `时间窗已设为 ${hours} 小时` });
+      const result = await reclusterAll(settings, get().articles);
+      set({ topics: result.topics, toast: `时间窗已设为 ${hours} 小时` });
     } catch (error) {
       set({ toast: `重新归集失败：${errorText(error)}` });
     } finally {
@@ -451,19 +507,88 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ settings, toast: enabled ? "已开启繁体转简体显示" : "已恢复原文显示" });
   },
 
+  setAutoRefreshMinutes: async (minutes) => {
+    const settings = { ...get().settings, autoRefreshMinutes: minutes };
+    await saveSettings(settings);
+    set({ settings, toast: minutes === 0 ? "已关闭自动刷新" : `已设置为每 ${minutes} 分钟自动刷新` });
+  },
+
+  setTranslationEnabled: async (enabled) => {
+    const settings = { ...get().settings, translationEnabled: enabled };
+    await saveSettings(settings);
+    set({ settings });
+  },
+
+  setTranslationEngine: async (engine) => {
+    const settings = { ...get().settings, translationEngine: engine };
+    await saveSettings(settings);
+    set({ settings });
+  },
+
+  updateTranslationConfig: async ({ baseUrl, model }) => {
+    const settings = {
+      ...get().settings,
+      translationBaseUrl: baseUrl.trim(),
+      translationModel: model.trim(),
+    };
+    await saveSettings(settings);
+    set({ settings, toast: "翻译引擎配置已保存" });
+  },
+
+  saveTranslationKey: async (key) => {
+    await saveTranslationApiKey(key.trim());
+    set({ toast: key.trim() ? "翻译 API Key 已保存到系统钥匙串" : "翻译 API Key 已清除" });
+  },
+
+  clearTranslationKey: async () => {
+    await deleteTranslationApiKey();
+    set({ toast: "翻译 API Key 已清除" });
+  },
+
   splitArticleFromTopic: async (topicId, articleId) => {
+    const topic = get().topics.find((item) => item.id === topicId);
+    if (!topic) return;
+    const remaining = { ...topic, articles: topic.articles.filter((article) => article.id !== articleId) };
+    const saved = remaining.isManual === 0 ? await saveManualTopic(remaining) : remaining;
     await removeArticleFromTopic(topicId, articleId);
-    set({ topics: await listTopicsWithArticles(), toast: "文章已从话题中移出" });
+    set({
+      topics: get().topics
+        .map((item) => item.id === topicId ? { ...saved, articles: remaining.articles } : item)
+        .filter((item) => item.articles.length > 0),
+      toast: "文章已从话题中移出，其余文章已保存为手动话题",
+    });
   },
 
   mergeTopicInto: async (sourceId, targetId) => {
-    await mergeTopics(sourceId, targetId);
-    set({ topics: await listTopicsWithArticles(), toast: "话题已合并" });
+    const topics = get().topics;
+    const source = topics.find((item) => item.id === sourceId);
+    const target = topics.find((item) => item.id === targetId);
+    if (!source || !target || source.id === target.id) return;
+    const combined = Array.from(
+      new Map([...source.articles, ...target.articles].map((article) => [article.id, article])).values(),
+    );
+    const merged = await saveManualTopic({
+      ...target,
+      label: target.label || source.label,
+      articles: combined,
+    });
+    if (source.isManual === 1) await deleteTopic(sourceId);
+    set({
+      topics: topics
+        .filter((item) => item.id !== sourceId)
+        .map((item) => item.id === targetId ? merged : item),
+      toast: "话题已合并并保存为手动话题",
+    });
   },
 
   removeTopic: async (topicId) => {
-    await deleteTopic(topicId);
-    set({ topics: await listTopicsWithArticles(), toast: "话题已解散" });
+    const topic = get().topics.find((item) => item.id === topicId);
+    if (!topic) return;
+    if (topic.isManual === 1) await deleteTopic(topicId);
+    set({
+      topics: get().topics.filter((item) => item.id !== topicId),
+      toast: topic.isManual === 1 ? "话题已解散" : "自动话题已从本次会话解散，重启后会重新归集",
+    });
   },
 
   clearToast: () => set({ toast: null }),

@@ -27,6 +27,8 @@ static VERIFIED_PATH: OnceLock<PathBuf> = OnceLock::new();
 
 const VERIFIED_TTL_SECS: u64 = 12 * 60 * 60;
 const CREDENTIAL_SERVICE: &str = "com.ifox.foxnest.feed-tokens";
+const TRANSLATION_CREDENTIAL_SERVICE: &str = "com.ifox.foxnest.translation";
+const TRANSLATION_CREDENTIAL_USER: &str = "api-key";
 
 fn feed_credential(feed_id: &str) -> Result<Entry, String> {
     if feed_id.is_empty() || feed_id.len() > 256 {
@@ -77,6 +79,39 @@ fn get_feed_token(window: Window, feed_id: String) -> Result<Option<String>, Str
 fn delete_feed_token(window: Window, feed_id: String) -> Result<(), String> {
     require_main_window(&window)?;
     remove_feed_credential(&feed_credential(&feed_id)?)
+}
+
+fn translation_credential() -> Result<Entry, String> {
+    Entry::new(TRANSLATION_CREDENTIAL_SERVICE, TRANSLATION_CREDENTIAL_USER)
+        .map_err(|error| format!("failed to access system keychain: {error}"))
+}
+
+#[tauri::command]
+fn save_translation_api_key(window: Window, key: String) -> Result<(), String> {
+    require_main_window(&window)?;
+    let entry = translation_credential()?;
+    if key.trim().is_empty() {
+        return remove_feed_credential(&entry);
+    }
+    entry
+        .set_password(key.trim())
+        .map_err(|error| format!("failed to save system keychain entry: {error}"))
+}
+
+#[tauri::command]
+fn get_translation_api_key(window: Window) -> Result<Option<String>, String> {
+    require_main_window(&window)?;
+    match translation_credential()?.get_password() {
+        Ok(key) => Ok(Some(key)),
+        Err(KeyringError::NoEntry) => Ok(None),
+        Err(error) => Err(format!("failed to read system keychain entry: {error}")),
+    }
+}
+
+#[tauri::command]
+fn delete_translation_api_key(window: Window) -> Result<(), String> {
+    require_main_window(&window)?;
+    remove_feed_credential(&translation_credential()?)
 }
 
 fn now_secs() -> u64 {
@@ -161,6 +196,48 @@ async fn fetch_url(
         .map_err(|e| format!("failed to read response body: {e}"))?;
 
     Ok(FetchResult { body, status })
+}
+
+#[tauri::command]
+async fn post_json(
+    url: &str,
+    headers: Option<HashMap<String, String>>,
+    body: String,
+    timeout_secs: Option<u64>,
+) -> Result<FetchResult, String> {
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        return Err("invalid request URL".into());
+    }
+    if body.len() > 2_000_000 {
+        return Err("request body is too large".into());
+    }
+    let client = reqwest::Client::builder()
+        .user_agent("Foxnest/0.1")
+        .timeout(std::time::Duration::from_secs(timeout_secs.unwrap_or(60)))
+        .build()
+        .map_err(|error| format!("failed to build http client: {error}"))?;
+    let mut request = client
+        .post(url)
+        .header("Content-Type", "application/json")
+        .body(body);
+    if let Some(map) = headers {
+        for (key, value) in map {
+            request = request.header(&key, value);
+        }
+    }
+    let response = request
+        .send()
+        .await
+        .map_err(|error| format!("request failed: {error}"))?;
+    let status = response.status().as_u16();
+    let response_body = response
+        .text()
+        .await
+        .map_err(|error| format!("failed to read response body: {error}"))?;
+    Ok(FetchResult {
+        body: response_body,
+        status,
+    })
 }
 
 /// Store feed content captured inside the verification WebView.
@@ -292,6 +369,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
             fetch_url,
+            post_json,
             save_verified_feed,
             clear_verified_feed,
             is_feed_verified,
@@ -299,7 +377,10 @@ pub fn run() {
             close_verification_window,
             save_feed_token,
             get_feed_token,
-            delete_feed_token
+            delete_feed_token,
+            save_translation_api_key,
+            get_translation_api_key,
+            delete_translation_api_key
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

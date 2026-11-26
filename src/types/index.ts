@@ -49,6 +49,19 @@ export interface Article {
   audioSize: number;
 }
 
+export interface Note {
+  id: string;
+  articleId: string;
+  quote: string;
+  createdAt: number;
+}
+
+export interface NoteWithArticle extends Note {
+  articleTitle: string;
+  feedTitle: string;
+  articlePublishedAt: number;
+}
+
 /** Audio metadata stored alongside an article. */
 export type ArticleAudio = Pick<
   Article,
@@ -82,6 +95,7 @@ export type ArticleFilter =
   | { type: "starred" };
 
 export type AggregationStrength = "conservative" | "normal" | "aggressive";
+export type TranslationEngine = "dictionary" | "openai" | "ollama";
 
 export interface Settings {
   aggregationStrength: AggregationStrength;
@@ -92,6 +106,12 @@ export interface Settings {
   theme: "light" | "dark" | "system";
   /** Convert Traditional Chinese to Simplified when displaying articles. */
   convertTraditional: boolean;
+  /** Automatic refresh interval in minutes; 0 disables startup and periodic refresh. */
+  autoRefreshMinutes: number;
+  translationEnabled: boolean;
+  translationEngine: TranslationEngine;
+  translationBaseUrl: string;
+  translationModel: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -101,6 +121,11 @@ export const DEFAULT_SETTINGS: Settings = {
   entityOverlapThreshold: 0.34,
   theme: "system",
   convertTraditional: true,
+  autoRefreshMinutes: 30,
+  translationEnabled: true,
+  translationEngine: "dictionary",
+  translationBaseUrl: "",
+  translationModel: "",
 };
 
 export const STRENGTH_PRESETS: Record<

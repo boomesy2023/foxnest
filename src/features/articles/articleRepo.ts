@@ -67,6 +67,15 @@ export async function listArticles(limit = 500): Promise<Article[]> {
   return rows.map(toArticle);
 }
 
+export async function getArticle(id: string): Promise<Article | null> {
+  const db = await getDb();
+  const rows = await db.select<ArticleRow[]>(
+    `${SELECT_WITH_FEED} WHERE a.id = ? LIMIT 1`,
+    [id],
+  );
+  return rows[0] ? toArticle(rows[0]) : null;
+}
+
 export async function listArticlesByFeed(feedId: string, limit = 300): Promise<Article[]> {
   const db = await getDb();
   const rows = await db.select<ArticleRow[]>(

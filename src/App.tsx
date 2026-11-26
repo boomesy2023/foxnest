@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { Rss, Settings as SettingsIcon, RefreshCw, Layers, Star, ChevronDown, ChevronRight, Folder, Inbox } from "lucide-react";
+import { Rss, Settings as SettingsIcon, Layers, Star, ChevronDown, ChevronRight, Folder, Inbox, NotebookPen } from "lucide-react";
 import { useAppStore } from "./store/useAppStore";
 import { cn } from "./lib/cn";
 import { ArticleList } from "./features/articles/ArticleList";
@@ -7,6 +7,7 @@ import { ArticleReader } from "./features/articles/ArticleReader";
 import { TopicView } from "./features/clustering/TopicView";
 import { FeedManager } from "./features/feeds/FeedManager";
 import { SettingsPanel } from "./features/settings/SettingsPanel";
+import { NotesView } from "./features/notes/NotesView";
 import { PodcastPlayer } from "./features/podcast/PodcastPlayer";
 import { usePlayerStore } from "./features/podcast/playerStore";
 
@@ -19,11 +20,10 @@ export default function App() {
   const activeFilter = useAppStore((s) => s.activeFilter);
   const setFilter = useAppStore((s) => s.setFilter);
   const refreshAll = useAppStore((s) => s.refreshAll);
-  const busy = useAppStore((s) => s.busy);
   const loading = useAppStore((s) => s.loading);
   const toast = useAppStore((s) => s.toast);
   const clearToast = useAppStore((s) => s.clearToast);
-  const reports = useAppStore((s) => s.reports);
+  const autoRefreshMinutes = useAppStore((s) => s.settings.autoRefreshMinutes);
   const unreadSessionReadIds = useAppStore((s) => s.unreadSessionReadIds);
   const hasPlayer = usePlayerStore((s) => Boolean(s.episode));
 
@@ -36,8 +36,31 @@ export default function App() {
   );
 
   useEffect(() => {
-    void initialize();
-  }, [initialize]);
+    let cancelled = false;
+    const start = async () => {
+      await initialize();
+      if (cancelled) return;
+      const state = useAppStore.getState();
+      if (state.settings.autoRefreshMinutes > 0 && state.feeds.length > 0 && !state.busy) {
+        await refreshAll();
+      }
+    };
+    void start();
+    return () => {
+      cancelled = true;
+    };
+  }, [initialize, refreshAll]);
+
+  useEffect(() => {
+    if (autoRefreshMinutes <= 0) return;
+    const timer = window.setInterval(() => {
+      const state = useAppStore.getState();
+      if (!state.loading && !state.busy && state.feeds.length > 0) {
+        void refreshAll();
+      }
+    }, autoRefreshMinutes * 60_000);
+    return () => window.clearInterval(timer);
+  }, [autoRefreshMinutes, refreshAll]);
 
   useEffect(() => {
     if (!toast) return;
@@ -64,21 +87,6 @@ export default function App() {
         return articles;
     }
   }, [articles, activeFilter, folderFeedIds, unreadSessionReadIds]);
-
-  const filterTitle = useMemo(() => {
-    switch (activeFilter.type) {
-      case "feed":
-        return feeds.find((f) => f.id === activeFilter.id)?.title ?? "全部文章";
-      case "folder":
-        return activeFilter.name;
-      case "unread":
-        return "未读文章";
-      case "starred":
-        return "已收藏";
-      default:
-        return "全部文章";
-    }
-  }, [activeFilter, feeds]);
 
   // Group feeds by folder for the sidebar. Feeds without a folder stay at top level.
   const groupedFeeds = useMemo(() => {
@@ -123,24 +131,10 @@ export default function App() {
         </button>
         <div className="ml-4 flex gap-1">
           <NavButton active={page === "reader"} onClick={() => setPage("reader")} icon={<Rss size={15} />} label="阅读" />
+          <NavButton active={page === "notes"} onClick={() => setPage("notes")} icon={<NotebookPen size={15} />} label="笔记" />
           <NavButton active={page === "topics"} onClick={() => setPage("topics")} icon={<Layers size={15} />} label="话题" />
           <NavButton active={page === "feeds"} onClick={() => setPage("feeds")} icon={<Folder size={15} />} label="订阅源" />
           <NavButton active={page === "settings"} onClick={() => setPage("settings")} icon={<SettingsIcon size={15} />} label="设置" />
-        </div>
-        <div className="ml-auto flex items-center gap-2">
-          {reports.length > 0 && page === "reader" && (
-            <span className="text-[11px] text-[var(--muted)]">
-              上次更新：{reports.length} 源 / +{reports.reduce((sum, r) => sum + r.added, 0)}
-            </span>
-          )}
-          <button
-            onClick={() => void refreshAll()}
-            disabled={busy}
-            className="flex items-center gap-1.5 rounded-md border border-[var(--border)] px-3 py-1.5 text-xs hover:bg-[var(--accent-soft)] disabled:opacity-50"
-          >
-            <RefreshCw size={13} className={busy ? "animate-spin" : ""} />
-            {busy ? "更新中" : "刷新全部"}
-          </button>
         </div>
       </header>
 
@@ -219,7 +213,7 @@ export default function App() {
 
             <div className="flex w-[360px] shrink-0 flex-col border-r border-[var(--border)]">
               <div className="min-h-0 flex-1">
-                <ArticleList articles={visibleArticles} title={filterTitle} />
+                <ArticleList articles={visibleArticles} />
               </div>
             </div>
 
@@ -228,6 +222,7 @@ export default function App() {
             </div>
           </div>
         )}
+        {page === "notes" && <NotesView />}
         {page === "topics" && (
           <div className="h-full overflow-hidden">
             <TopicView />

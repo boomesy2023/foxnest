@@ -19,11 +19,10 @@ function timeLabel(timestamp: number): string {
 
 interface ArticleListProps {
   articles: Article[];
-  title: string;
   emptyText?: string;
 }
 
-export function ArticleList({ articles, title, emptyText }: ArticleListProps) {
+export function ArticleList({ articles, emptyText }: ArticleListProps) {
   const selectedArticleId = useAppStore((s) => s.selectedArticleId);
   const selectArticle = useAppStore((s) => s.selectArticle);
   const toggleRead = useAppStore((s) => s.toggleRead);
@@ -39,14 +38,10 @@ export function ArticleList({ articles, title, emptyText }: ArticleListProps) {
 
   return (
     <section className="flex h-full min-h-0 flex-col">
-      <header className="flex items-center justify-between border-b border-[var(--border)] px-4 py-3">
-        <h2 className="text-sm font-medium">{title}</h2>
-        <span className="text-xs text-[var(--muted)]">{sorted.length} 篇</span>
-      </header>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {sorted.length === 0 ? (
           <p className="px-4 py-10 text-center text-[var(--muted)]">
-            {emptyText ?? "暂无文章，点击右上角刷新订阅源"}
+            {emptyText ?? "暂无文章，可在「订阅源」中逐个刷新"}
           </p>
         ) : (
           sorted.map((article) => {

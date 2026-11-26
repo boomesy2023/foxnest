@@ -5,9 +5,8 @@ import { extractEntities, extractStrongAnchors, sharedAnchorCount, summarizeLabe
 import { headlineSimilarity } from "./similarity";
 import {
   addArticleToTopic,
-  createTopic,
   getArticleEntities,
-  listTopicsWithArticles,
+  listManualTopicsWithArticles,
   setArticleEntities,
 } from "./topicRepo";
 
@@ -15,6 +14,7 @@ export interface ClusterDecision {
   action: "merged" | "created" | "skipped" | "exact-duplicate";
   topicId: string | null;
   score?: number;
+  topics: TopicWithArticles[];
 }
 
 /**
@@ -29,27 +29,23 @@ export interface ClusterDecision {
 export async function clusterArticle(
   article: Article,
   settings: Settings,
-  topics?: TopicWithArticles[],
+  topics: TopicWithArticles[],
 ): Promise<ClusterDecision> {
   const fingerprint = article.fingerprint.trim();
-  const allTopics = topics ?? (await listTopicsWithArticles());
 
-  // Exact duplicate: same canonical URL already present in any topic.
-  for (const topic of allTopics) {
+  for (const topic of topics) {
     if (topic.articles.some((existing) => existing.fingerprint === fingerprint && existing.id !== article.id)) {
-      return { action: "exact-duplicate", topicId: topic.id };
+      return { action: "exact-duplicate", topicId: topic.id, topics };
     }
   }
 
-  // Compare in Simplified Chinese so Traditional and Simplified sources
-  // describing the same event produce identical anchors.
   const title = simplifyText(article.title);
   let entities = await getArticleEntities(article);
   if (entities.length === 0) {
     entities = extractEntities(`${title} ${simplifyText(article.summary)}`);
     await setArticleEntities(article.id, entities);
+    article = { ...article, entities: JSON.stringify(entities) };
   }
-  // Headlines only. Summaries contain too much boilerplate to be reliable.
   const anchors = extractStrongAnchors(title);
 
   const windowMs = settings.timeWindowHours * 60 * 60 * 1000;
@@ -57,9 +53,7 @@ export async function clusterArticle(
   let bestScore = 0;
   let bestSharedAnchors = 0;
 
-  for (const topic of allTopics) {
-    // Compare against several recent members, not just the newest one: the
-    // same story can be reported again a few hours later.
+  for (const topic of topics) {
     for (const member of topic.articles.slice(0, 10)) {
       if (Math.abs(member.publishedAt - article.publishedAt) > windowMs) continue;
 
@@ -73,8 +67,6 @@ export async function clusterArticle(
       );
       const shared = sharedAnchorCount(anchors, extractStrongAnchors(memberTitle));
 
-      // Two shared proper nouns are decisive. A single one is only enough
-      // when the headlines are also genuinely similar.
       const qualifies =
         shared >= 2 || (shared === 1 && score.combined >= settings.similarityThreshold);
       const effectiveScore = Math.max(score.combined, shared >= 2 ? 0.9 : shared === 1 ? 0.62 : 0);
@@ -87,54 +79,56 @@ export async function clusterArticle(
   }
 
   if (bestTopic && bestSharedAnchors >= 1) {
-    await addArticleToTopic(bestTopic.id, article.id);
-    return { action: "merged", topicId: bestTopic.id, score: bestScore };
+    if (bestTopic.isManual === 1) {
+      await addArticleToTopic(bestTopic.id, article.id);
+    }
+    const articles = [article, ...bestTopic.articles];
+    const mergedTopic: TopicWithArticles = {
+      ...bestTopic,
+      articles,
+      updatedAt: Date.now(),
+      ...(bestTopic.isManual === 0
+        ? {
+            label: summarizeLabel(articles.map((item) => simplifyText(item.title))),
+            representativeTitle: simplifyText(articles[0].title),
+          }
+        : {}),
+    };
+    return {
+      action: "merged",
+      topicId: bestTopic.id,
+      score: bestScore,
+      topics: topics.map((topic) => (topic.id === bestTopic.id ? mergedTopic : topic)),
+    };
   }
 
-  const label = summarizeLabel([title]);
-  const topic = await createTopic({
+  const now = Date.now();
+  const topic: TopicWithArticles = {
     id: makeId("t_"),
-    label,
+    label: summarizeLabel([title]),
     representativeTitle: title,
+    createdAt: now,
+    updatedAt: now,
     isManual: 0,
-  });
-  await addArticleToTopic(topic.id, article.id);
-  return { action: "created", topicId: topic.id, score: bestScore };
+    articles: [article],
+  };
+  return { action: "created", topicId: topic.id, topics: [...topics, topic] };
 }
 
-/** Re-cluster all articles from scratch. Used when the user changes strength. */
-export async function reclusterAll(settings: Settings, articles: Article[]): Promise<{ topics: number; merged: number }> {
-  const { getDb } = await import("../../lib/db");
-  const db = await getDb();
-  // Rebuild automatic topics but leave manual topics and their links intact.
-  await db.execute(
-    "DELETE FROM topic_articles WHERE topic_id IN (SELECT id FROM topics WHERE is_manual = 0)",
-  );
-  await db.execute("DELETE FROM topics WHERE is_manual = 0");
-  // Anchors are now computed from Simplified Chinese titles; drop the old
-  // entity cache so every article is re-tokenized with the new rules.
-  await db.execute("UPDATE articles SET entities = '[]'");
-
-  let topics = 0;
+export async function reclusterAll(
+  settings: Settings,
+  articles: Article[],
+): Promise<{ topics: TopicWithArticles[]; created: number; merged: number }> {
+  let workingTopics = await listManualTopicsWithArticles();
+  let created = 0;
   let merged = 0;
-  const sorted = [...articles]
-    .map((article) => ({ ...article, entities: "[]" }))
-    .sort((a, b) => a.publishedAt - b.publishedAt);
-  let workingTopics: TopicWithArticles[] = await listTopicsWithArticles();
+  const sorted = [...articles].sort((a, b) => a.publishedAt - b.publishedAt);
 
   for (const article of sorted) {
     const decision = await clusterArticle(article, settings, workingTopics);
-    if (decision.action === "created") {
-      topics += 1;
-      workingTopics = await listTopicsWithArticles();
-    } else if (decision.action === "merged") {
-      merged += 1;
-      workingTopics = workingTopics.map((topic) =>
-        topic.id === decision.topicId
-          ? { ...topic, articles: [article, ...topic.articles], updatedAt: Date.now() }
-          : topic,
-      );
-    }
+    workingTopics = decision.topics;
+    if (decision.action === "created") created += 1;
+    else if (decision.action === "merged") merged += 1;
   }
-  return { topics, merged };
+  return { topics: workingTopics, created, merged };
 }

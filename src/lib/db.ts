@@ -15,6 +15,18 @@ export function deleteFeedToken(feedId: string): Promise<void> {
   return invoke("delete_feed_token", { feedId });
 }
 
+export function saveTranslationApiKey(key: string): Promise<void> {
+  return invoke("save_translation_api_key", { key });
+}
+
+export function getTranslationApiKey(): Promise<string | null> {
+  return invoke("get_translation_api_key");
+}
+
+export function deleteTranslationApiKey(): Promise<void> {
+  return invoke("delete_translation_api_key");
+}
+
 async function migrateLegacyTokens(db: Database): Promise<void> {
   const rows = await db.select<{ id: string; api_token: string | null }[]>(
     "SELECT id, api_token FROM feeds WHERE api_token IS NOT NULL AND api_token <> ''",
@@ -85,6 +97,14 @@ async function initializeSchema(db: Database): Promise<void> {
       audio_size INTEGER NOT NULL DEFAULT 0
     )`,
     "CREATE INDEX IF NOT EXISTS idx_articles_published ON articles(published_at DESC)",
+    `CREATE TABLE IF NOT EXISTS notes (
+      id TEXT PRIMARY KEY,
+      article_id TEXT NOT NULL REFERENCES articles(id) ON DELETE CASCADE,
+      quote TEXT NOT NULL,
+      created_at INTEGER NOT NULL
+    )`,
+    "CREATE INDEX IF NOT EXISTS idx_notes_created ON notes(created_at DESC)",
+    "CREATE INDEX IF NOT EXISTS idx_notes_article ON notes(article_id)",
     `CREATE TABLE IF NOT EXISTS topics (
       id TEXT PRIMARY KEY,
       label TEXT NOT NULL,
@@ -103,6 +123,10 @@ async function initializeSchema(db: Database): Promise<void> {
       key TEXT PRIMARY KEY,
       value TEXT NOT NULL
     )`,
+    "UPDATE articles SET entities = '[]' WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'entityExtractorVersion' AND value = '2')",
+    "INSERT INTO settings (key, value) VALUES ('entityExtractorVersion', '2') ON CONFLICT(key) DO UPDATE SET value = '2'",
+    "DELETE FROM topic_articles WHERE topic_id IN (SELECT id FROM topics WHERE is_manual = 0)",
+    "DELETE FROM topics WHERE is_manual = 0",
     ...missingColumns.map((column) => `ALTER TABLE articles ADD COLUMN ${column}`),
     "DELETE FROM articles WHERE fingerprint = ''",
     `DELETE FROM articles
@@ -110,6 +134,7 @@ async function initializeSchema(db: Database): Promise<void> {
            SELECT MIN(id) FROM articles GROUP BY fingerprint
          )`,
     "DELETE FROM topic_articles WHERE article_id NOT IN (SELECT id FROM articles)",
+    "DELETE FROM notes WHERE article_id NOT IN (SELECT id FROM articles)",
     "DROP INDEX IF EXISTS idx_articles_fingerprint",
     `CREATE UNIQUE INDEX IF NOT EXISTS idx_articles_fingerprint
        ON articles(fingerprint) WHERE fingerprint <> ''`,
@@ -154,6 +179,20 @@ export function fetchUrl(
   // Tauri 2 maps JS camelCase keys to Rust snake_case command params.
   return invoke("fetch_url", {
     url,
+    headers: headers ?? null,
+    timeoutSecs: timeoutSecs ?? null,
+  });
+}
+
+export function postJson(
+  url: string,
+  body: unknown,
+  headers?: Record<string, string>,
+  timeoutSecs?: number,
+): Promise<FetchResult> {
+  return invoke("post_json", {
+    url,
+    body: JSON.stringify(body),
     headers: headers ?? null,
     timeoutSecs: timeoutSecs ?? null,
   });

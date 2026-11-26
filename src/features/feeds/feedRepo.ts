@@ -87,6 +87,18 @@ export async function updateFeed(
 
 export async function deleteFeed(id: string): Promise<void> {
   const db = await getDb();
+  await db.execute(
+    `DELETE FROM topic_articles
+      WHERE article_id IN (SELECT id FROM articles WHERE feed_id = ?)
+        AND topic_id IN (SELECT id FROM topics WHERE is_manual = 1)`,
+    [id],
+  );
+  await db.execute(
+    `DELETE FROM topics
+      WHERE is_manual = 1
+        AND NOT EXISTS (SELECT 1 FROM topic_articles WHERE topic_articles.topic_id = topics.id)`,
+  );
+  await db.execute("DELETE FROM notes WHERE article_id IN (SELECT id FROM articles WHERE feed_id = ?)", [id]);
   await db.execute("DELETE FROM articles WHERE feed_id = ?", [id]);
   await db.execute("DELETE FROM feeds WHERE id = ?", [id]);
   await deleteFeedToken(id);

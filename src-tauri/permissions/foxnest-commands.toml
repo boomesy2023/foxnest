@@ -7,6 +7,7 @@ identifier = "allow-main-commands"
 description = "Enables the app commands used by the bundled Foxnest UI."
 commands.allow = [
   "fetch_url",
+  "post_json",
   "open_verification_window",
   "close_verification_window",
   "is_feed_verified",
@@ -14,6 +15,9 @@ commands.allow = [
   "save_feed_token",
   "get_feed_token",
   "delete_feed_token",
+  "save_translation_api_key",
+  "get_translation_api_key",
+  "delete_translation_api_key",
 ]
 
 [[permission]]

@@ -23,6 +23,55 @@ const STOP_WORDS = new Set([
 
 const CJK = /[\u4e00-\u9fff\u3400-\u4dbf]/;
 
+const KNOWN_SHORT_ENTITIES = [
+  "华为", "微软", "谷歌", "苹果", "荣耀", "小米", "三星", "英伟达",
+  "亚马逊", "阿里", "腾讯", "百度", "巴黎", "迪卡侬", "米家",
+];
+
+const KNOWN_PEOPLE = new Set([
+  "黄仁勋", "雷军", "马斯克", "乔布斯", "库克", "盖茨", "李想", "何小鹏",
+  "李斌", "刘强东", "马云", "马化腾", "张一鸣", "丁磊", "林俊", "姚顺雨",
+]);
+
+const COMMON_SURNAMES = new Set(
+  "黄王李张刘陈杨赵周吴徐孙马朱胡郭何林罗郑梁谢宋唐许韩冯邓曹彭曾肖田董袁潘于蒋蔡余杜叶程苏魏吕丁任沈姚卢姜崔钟谭陆汪范金石廖贾夏韦付方白邹孟熊秦邱江尹薛闫段雷侯龙史陶黎贺顾毛郝龚邵万钱严覃武戴莫孔向汤".split(""),
+);
+
+const PERSON_NAME_EXCLUDES = new Set([
+  "麦当劳", "马自达", "王八蛋", "任何", "如何", "何时", "方向", "方式",
+  "方法", "方面", "方案", "金融", "金额", "金色", "金价", "金牌",
+  "任务", "责任", "信任", "任期", "周期", "程度", "姓名", "名称",
+]);
+
+const PREPOSITIONAL_SURNAMES = new Set(["于", "向", "从", "对", "和", "与", "为", "被", "把"]);
+const GENERIC_NAME_CHARS = new Set(
+  "的了在是和与及为被把从对向以将于上中个不也就都而或些表示称说报道消息最新今日昨天如何什么为什么可以已经正在将会可能进行通过对于关于发布推出公布宣布开始结束继续影响回应确认发现出现提高下降增长减少价格售价方法方式问题结果原因相关有关体验推荐频道使用支持提供搜索更新升级安装运行创建系统软件应用服务功能版本用户设备项目公司手机电脑网络数据安全漏洞攻击服务器上传图片优惠特惠折扣免费限时订阅年费早报速递评测问号近期大家好评开源移植".split(""),
+);
+
+/** Recognize complete Chinese personal names before falling back to bigrams. */
+export function extractPersonNames(text: string): string[] {
+  const names = new Set<string>();
+  for (const name of KNOWN_PEOPLE) {
+    if (text.includes(name)) names.add(name);
+  }
+  for (const run of text.match(/[\u4e00-\u9fff]+/g) ?? []) {
+    for (let i = 0; i + 3 <= run.length; i += 1) {
+      if (!COMMON_SURNAMES.has(run[i])) continue;
+      if (i > 0 && PREPOSITIONAL_SURNAMES.has(run[i])) continue;
+      const candidate = run.slice(i, i + 3);
+      const given = Array.from(candidate.slice(1));
+      if (
+        !PERSON_NAME_EXCLUDES.has(candidate) &&
+        !containsCommonPhrase(candidate) &&
+        given.every((char) => !GENERIC_NAME_CHARS.has(char))
+      ) {
+        names.add(candidate);
+      }
+    }
+  }
+  return Array.from(names);
+}
+
 function isNoise(token: string): boolean {
   if (!token || STOP_WORDS.has(token.toLowerCase())) return true;
   if (/^\d+$/.test(token)) return true;
@@ -73,10 +122,20 @@ export function tokenize(text: string): string[] {
  */
 export function extractEntities(text: string): string[] {
   const entities = new Set<string>();
-  const originalRuns = text.match(/[\u4e00-\u9fff]{2,8}|[A-Z][A-Za-z0-9]{1,20}/g) ?? [];
+  const people = extractPersonNames(text);
+  const originalRuns = text.match(/[\u4e00-\u9fff]{2,}|[A-Z][A-Za-z0-9]{1,20}/g) ?? [];
 
   for (const run of originalRuns) {
     if (CJK.test(run)) {
+      for (const known of KNOWN_SHORT_ENTITIES) {
+        if (run.includes(known)) entities.add(known);
+      }
+      const runPeople = people.filter((name) => run.includes(name));
+      if (runPeople.length > 0) {
+        runPeople.forEach((name) => entities.add(name));
+        continue;
+      }
+
       // Drop leading/trailing function characters, keep the core 2-6 chars.
       let core = run;
       const leading = /^(这些|那个|一个|这个|以及|还有|关于|对于|表示|宣布|发布|推出)/;
@@ -126,12 +185,6 @@ const COMMON_TOPIC_WORDS = new Set([
   "频道", "使用", "支持", "提供", "搜索", "更新", "升级", "安装", "运行", "创建",
   "早报", "速递", "评测", "问号", "近期", "大家", "好评", "开源", "移植",
 ]);
-
-/** Short proper nouns that are safe to recognize even inside longer phrases. */
-const KNOWN_SHORT_ENTITIES = [
-  "华为", "微软", "谷歌", "苹果", "荣耀", "小米", "三星", "英伟达",
-  "亚马逊", "阿里", "腾讯", "百度", "巴黎", "迪卡侬", "米家",
-];
 
 /** Latin words too broad to identify a single story. */
 const STRONG_LATIN_EXCLUDE = new Set([
@@ -210,10 +263,13 @@ export function extractStrongAnchors(text: string): string[] {
     }
   }
 
-  for (const run of text.match(/[\u4e00-\u9fff]{2,12}/g) ?? []) {
+  for (const run of text.match(/[\u4e00-\u9fff]{2,}/g) ?? []) {
+    const people = extractPersonNames(run);
+    people.forEach((name) => anchors.add(name));
     for (const known of KNOWN_SHORT_ENTITIES) {
       if (run.includes(known)) anchors.add(known);
     }
+    if (people.length > 0) continue;
 
     let core = run;
     let previous = "";
@@ -244,15 +300,22 @@ export function sharedAnchorCount(a: string[], b: string[]): number {
 export function summarizeLabel(titles: string[]): string {
   if (titles.length === 0) return "未命名话题";
   const counts = new Map<string, number>();
+  const people = new Set<string>();
   for (const title of titles) {
-    for (const entity of extractEntities(title)) {
-      counts.set(entity, (counts.get(entity) ?? 0) + 1);
+    extractPersonNames(title).forEach((name) => people.add(name));
+    for (const anchor of extractStrongAnchors(title)) {
+      counts.set(anchor, (counts.get(anchor) ?? 0) + 1);
     }
   }
   const ranked = Array.from(counts.entries())
     .filter(([entity]) => entity.length >= 2)
-    .sort((a, b) => b[1] - a[1] || b[0].length - a[0].length);
-  const top = ranked.slice(0, 3).map(([entity]) => entity);
+    .sort((a, b) =>
+      b[1] - a[1] ||
+      Number(people.has(b[0])) - Number(people.has(a[0])) ||
+      b[0].length - a[0].length,
+    );
+  const recurring = ranked.filter(([, count]) => count >= 2);
+  const top = (recurring.length > 0 ? recurring : ranked).slice(0, 3).map(([entity]) => entity);
   if (top.length === 0) return titles[0].slice(0, 24);
   return top.join(" · ");
 }
