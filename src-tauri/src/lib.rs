@@ -3,9 +3,8 @@ use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use keyring::{Entry, Error as KeyringError};
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, Window};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 #[derive(Debug, Serialize)]
 pub struct FetchResult {
@@ -30,88 +29,158 @@ const CREDENTIAL_SERVICE: &str = "com.ifox.foxnest.feed-tokens";
 const TRANSLATION_CREDENTIAL_SERVICE: &str = "com.ifox.foxnest.translation";
 const TRANSLATION_CREDENTIAL_USER: &str = "api-key";
 
-fn feed_credential(feed_id: &str) -> Result<Entry, String> {
-    if feed_id.is_empty() || feed_id.len() > 256 {
-        return Err("invalid feed id".into());
+// Desktop: OS keychain. Android has no keyring backend, so credentials live in
+// a file inside the app's private data directory, which other apps cannot read.
+#[cfg(not(target_os = "android"))]
+mod credentials {
+    use super::{AppHandle, KeyringError};
+    use keyring::Entry;
+
+    fn entry(service: &str, user: &str) -> Result<Entry, String> {
+        Entry::new(service, user).map_err(|error| format!("failed to access system keychain: {error}"))
     }
-    Entry::new(CREDENTIAL_SERVICE, feed_id)
-        .map_err(|error| format!("failed to access system keychain: {error}"))
+
+    pub fn get(_app: &AppHandle, service: &str, user: &str) -> Result<Option<String>, String> {
+        match entry(service, user)?.get_password() {
+            Ok(secret) => Ok(Some(secret)),
+            Err(KeyringError::NoEntry) => Ok(None),
+            Err(error) => Err(format!("failed to read system keychain entry: {error}")),
+        }
+    }
+
+    pub fn set(_app: &AppHandle, service: &str, user: &str, secret: &str) -> Result<(), String> {
+        entry(service, user)?
+            .set_password(secret)
+            .map_err(|error| format!("failed to save system keychain entry: {error}"))
+    }
+
+    pub fn delete(_app: &AppHandle, service: &str, user: &str) -> Result<(), String> {
+        match entry(service, user)?.delete_credential() {
+            Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
+            Err(error) => Err(format!("failed to delete system keychain entry: {error}")),
+        }
+    }
 }
 
-fn remove_feed_credential(entry: &Entry) -> Result<(), String> {
-    match entry.delete_credential() {
-        Ok(()) | Err(KeyringError::NoEntry) => Ok(()),
-        Err(error) => Err(format!("failed to delete system keychain entry: {error}")),
+#[cfg(not(target_os = "android"))]
+use keyring::Error as KeyringError;
+
+#[cfg(target_os = "android")]
+mod credentials {
+    use super::AppHandle;
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+    use std::sync::{Mutex, OnceLock};
+    use tauri::Manager;
+
+    static STORE: OnceLock<Mutex<HashMap<String, String>>> = OnceLock::new();
+    static STORE_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+    fn key(service: &str, user: &str) -> String {
+        format!("{service}\u{0}{user}")
+    }
+
+    fn load(path: &PathBuf) -> HashMap<String, String> {
+        std::fs::read_to_string(path)
+            .ok()
+            .and_then(|text| serde_json::from_str(&text).ok())
+            .unwrap_or_default()
+    }
+
+    fn store(app: &AppHandle) -> &'static Mutex<HashMap<String, String>> {
+        let path = STORE_PATH.get_or_init(|| {
+            app.path()
+                .app_data_dir()
+                .unwrap_or_else(|_| std::env::temp_dir())
+                .join("credentials.json")
+        });
+        STORE.get_or_init(|| Mutex::new(load(path)))
+    }
+
+    fn persist(path: &PathBuf, map: &HashMap<String, String>) -> Result<(), String> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("failed to create data directory: {e}"))?;
+        }
+        let text = serde_json::to_string_pretty(map).map_err(|e| e.to_string())?;
+        std::fs::write(path, text).map_err(|e| format!("failed to write credentials: {e}"))
+    }
+
+    pub fn get(app: &AppHandle, service: &str, user: &str) -> Result<Option<String>, String> {
+        let map = store(app).lock().unwrap();
+        Ok(map.get(&key(service, user)).cloned())
+    }
+
+    pub fn set(app: &AppHandle, service: &str, user: &str, secret: &str) -> Result<(), String> {
+        let mut map = store(app).lock().unwrap();
+        map.insert(key(service, user), secret.to_string());
+        persist(STORE_PATH.get().unwrap(), &map)
+    }
+
+    pub fn delete(app: &AppHandle, service: &str, user: &str) -> Result<(), String> {
+        let mut map = store(app).lock().unwrap();
+        map.remove(&key(service, user));
+        persist(STORE_PATH.get().unwrap(), &map)
     }
 }
 
-fn require_main_window(window: &Window) -> Result<(), String> {
+fn require_main_window(window: &WebviewWindow) -> Result<(), String> {
     if window.label() != "main" {
         return Err("credential access is only available in the main window".into());
     }
     Ok(())
 }
 
+fn valid_feed_id(feed_id: &str) -> Result<(), String> {
+    if feed_id.is_empty() || feed_id.len() > 256 {
+        return Err("invalid feed id".into());
+    }
+    Ok(())
+}
+
 #[tauri::command]
-fn save_feed_token(window: Window, feed_id: String, token: String) -> Result<(), String> {
+fn save_feed_token(window: WebviewWindow, app: AppHandle, feed_id: String, token: String) -> Result<(), String> {
     require_main_window(&window)?;
-    let entry = feed_credential(&feed_id)?;
+    valid_feed_id(&feed_id)?;
     if token.is_empty() {
-        return remove_feed_credential(&entry);
+        return credentials::delete(&app, CREDENTIAL_SERVICE, &feed_id);
     }
-    entry
-        .set_password(&token)
-        .map_err(|error| format!("failed to save system keychain entry: {error}"))
+    credentials::set(&app, CREDENTIAL_SERVICE, &feed_id, &token)
 }
 
 #[tauri::command]
-fn get_feed_token(window: Window, feed_id: String) -> Result<Option<String>, String> {
+fn get_feed_token(window: WebviewWindow, app: AppHandle, feed_id: String) -> Result<Option<String>, String> {
     require_main_window(&window)?;
-    let entry = feed_credential(&feed_id)?;
-    match entry.get_password() {
-        Ok(token) => Ok(Some(token)),
-        Err(KeyringError::NoEntry) => Ok(None),
-        Err(error) => Err(format!("failed to read system keychain entry: {error}")),
+    valid_feed_id(&feed_id)?;
+    credentials::get(&app, CREDENTIAL_SERVICE, &feed_id)
+}
+
+#[tauri::command]
+fn delete_feed_token(window: WebviewWindow, app: AppHandle, feed_id: String) -> Result<(), String> {
+    require_main_window(&window)?;
+    valid_feed_id(&feed_id)?;
+    credentials::delete(&app, CREDENTIAL_SERVICE, &feed_id)
+}
+
+#[tauri::command]
+fn save_translation_api_key(window: WebviewWindow, app: AppHandle, key: String) -> Result<(), String> {
+    require_main_window(&window)?;
+    let key = key.trim();
+    if key.is_empty() {
+        return credentials::delete(&app, TRANSLATION_CREDENTIAL_SERVICE, TRANSLATION_CREDENTIAL_USER);
     }
+    credentials::set(&app, TRANSLATION_CREDENTIAL_SERVICE, TRANSLATION_CREDENTIAL_USER, key)
 }
 
 #[tauri::command]
-fn delete_feed_token(window: Window, feed_id: String) -> Result<(), String> {
+fn get_translation_api_key(window: WebviewWindow, app: AppHandle) -> Result<Option<String>, String> {
     require_main_window(&window)?;
-    remove_feed_credential(&feed_credential(&feed_id)?)
-}
-
-fn translation_credential() -> Result<Entry, String> {
-    Entry::new(TRANSLATION_CREDENTIAL_SERVICE, TRANSLATION_CREDENTIAL_USER)
-        .map_err(|error| format!("failed to access system keychain: {error}"))
+    credentials::get(&app, TRANSLATION_CREDENTIAL_SERVICE, TRANSLATION_CREDENTIAL_USER)
 }
 
 #[tauri::command]
-fn save_translation_api_key(window: Window, key: String) -> Result<(), String> {
+fn delete_translation_api_key(window: WebviewWindow, app: AppHandle) -> Result<(), String> {
     require_main_window(&window)?;
-    let entry = translation_credential()?;
-    if key.trim().is_empty() {
-        return remove_feed_credential(&entry);
-    }
-    entry
-        .set_password(key.trim())
-        .map_err(|error| format!("failed to save system keychain entry: {error}"))
-}
-
-#[tauri::command]
-fn get_translation_api_key(window: Window) -> Result<Option<String>, String> {
-    require_main_window(&window)?;
-    match translation_credential()?.get_password() {
-        Ok(key) => Ok(Some(key)),
-        Err(KeyringError::NoEntry) => Ok(None),
-        Err(error) => Err(format!("failed to read system keychain entry: {error}")),
-    }
-}
-
-#[tauri::command]
-fn delete_translation_api_key(window: Window) -> Result<(), String> {
-    require_main_window(&window)?;
-    remove_feed_credential(&translation_credential()?)
+    credentials::delete(&app, TRANSLATION_CREDENTIAL_SERVICE, TRANSLATION_CREDENTIAL_USER)
 }
 
 fn now_secs() -> u64 {
@@ -309,6 +378,11 @@ async fn open_verification_window(
     site_url: String,
     feed_url: String,
 ) -> Result<(), String> {
+    // The in-app verification browser is desktop-only; mobile has no separate windows.
+    if cfg!(target_os = "android") || cfg!(target_os = "ios") {
+        return Err("当前平台暂不支持站点人机验证，请稍后重试或更换订阅地址".into());
+    }
+
     // Recreate the window so a fresh page load runs the capture script again.
     if let Some(window) = app.get_webview_window("verification") {
         let _ = window.destroy();
