@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { Rss, Settings as SettingsIcon, Layers, Star, ChevronDown, ChevronRight, Folder, Inbox, NotebookPen } from "lucide-react";
+import { Rss, Settings as SettingsIcon, Layers, Star, ChevronDown, ChevronRight, Folder, Inbox, NotebookPen, ListFilter } from "lucide-react";
 import { useAppStore } from "./store/useAppStore";
+import type { ArticleFilter } from "./types";
 import { cn } from "./lib/cn";
 import { ArticleList } from "./features/articles/ArticleList";
 import { ArticleReader } from "./features/articles/ArticleReader";
@@ -18,6 +19,8 @@ export default function App() {
   const feeds = useAppStore((s) => s.feeds);
   const articles = useAppStore((s) => s.articles);
   const activeFilter = useAppStore((s) => s.activeFilter);
+  const selectedArticleId = useAppStore((s) => s.selectedArticleId);
+  const selectArticle = useAppStore((s) => s.selectArticle);
   const setFilter = useAppStore((s) => s.setFilter);
   const refreshAll = useAppStore((s) => s.refreshAll);
   const loading = useAppStore((s) => s.loading);
@@ -105,6 +108,11 @@ export default function App() {
   }, [feeds]);
 
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const chooseFilter = (filter: ArticleFilter) => {
+    setFilter(filter);
+    setFiltersOpen(false);
+  };
   const toggleFolder = (name: string) => {
     setCollapsedFolders((prev) => {
       const next = new Set(prev);
@@ -116,49 +124,68 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="flex h-screen items-center justify-center text-[var(--muted)]">
+      <div className="flex h-dvh items-center justify-center text-[var(--muted)]">
         正在加载 Foxnest…
       </div>
     );
   }
 
   return (
-    <div className="flex h-screen flex-col">
-      <header className="flex h-12 shrink-0 items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-4">
+    <div className="flex h-dvh flex-col">
+      <header className="flex min-h-12 shrink-0 items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-4 pt-[env(safe-area-inset-top)]">
         <button onClick={() => setPage("reader")} className="flex items-center gap-2 text-[15px] font-semibold">
           <span className="text-[var(--accent)]">F</span>
           <span>Foxnest</span>
         </button>
-        <div className="ml-4 flex gap-1">
+        <div className="ml-4 hidden gap-1 md:flex">
           <NavButton active={page === "reader"} onClick={() => setPage("reader")} icon={<Rss size={15} />} label="阅读" />
           <NavButton active={page === "notes"} onClick={() => setPage("notes")} icon={<NotebookPen size={15} />} label="笔记" />
           <NavButton active={page === "topics"} onClick={() => setPage("topics")} icon={<Layers size={15} />} label="话题" />
           <NavButton active={page === "feeds"} onClick={() => setPage("feeds")} icon={<Folder size={15} />} label="订阅源" />
           <NavButton active={page === "settings"} onClick={() => setPage("settings")} icon={<SettingsIcon size={15} />} label="设置" />
         </div>
+        <button
+          type="button"
+          onClick={() => setFiltersOpen((value) => !value)}
+          className="ml-auto rounded-md p-2 text-[var(--muted)] hover:bg-[var(--accent-soft)] md:hidden"
+          aria-label="筛选订阅源"
+        >
+          <ListFilter size={18} />
+        </button>
       </header>
 
       <main className="min-h-0 flex-1">
         {page === "reader" && (
-          <div className="flex h-full">
-            <aside className="w-48 shrink-0 overflow-y-auto border-r border-[var(--border)] bg-[var(--surface)] py-3">
+          <div className="relative flex h-full">
+            {filtersOpen && (
+              <button
+                type="button"
+                className="fixed inset-0 z-30 bg-black/30 md:hidden"
+                onClick={() => setFiltersOpen(false)}
+                aria-label="关闭筛选"
+              />
+            )}
+            <aside className={cn(
+              "fixed bottom-16 left-0 top-12 z-40 w-64 overflow-y-auto border-r border-[var(--border)] bg-[var(--surface)] py-3 md:static md:z-auto md:w-48 md:translate-x-0",
+              filtersOpen ? "translate-x-0" : "-translate-x-full",
+            )}>
               <p className="px-3 pb-2 text-[11px] font-medium uppercase tracking-wide text-[var(--muted)]">筛选</p>
               <SideItem
                 active={activeFilter.type === "all"}
-                onClick={() => setFilter({ type: "all" })}
+                onClick={() => chooseFilter({ type: "all" })}
                 icon={<Rss size={13} />}
                 label="全部文章"
               />
               <SideItem
                 active={activeFilter.type === "unread"}
-                onClick={() => setFilter({ type: "unread" })}
+                onClick={() => chooseFilter({ type: "unread" })}
                 icon={<Inbox size={13} />}
                 label="未读文章"
                 count={unreadCount}
               />
               <SideItem
                 active={activeFilter.type === "starred"}
-                onClick={() => setFilter({ type: "starred" })}
+                onClick={() => chooseFilter({ type: "starred" })}
                 icon={<Star size={13} />}
                 label="已收藏"
               />
@@ -168,7 +195,7 @@ export default function App() {
                 <SideItem
                   key={feed.id}
                   active={activeFilter.type === "feed" && activeFilter.id === feed.id}
-                  onClick={() => setFilter({ type: "feed", id: feed.id })}
+                  onClick={() => chooseFilter({ type: "feed", id: feed.id })}
                   label={feed.title}
                   indent
                 />
@@ -187,7 +214,7 @@ export default function App() {
                         {collapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
                       </button>
                       <button
-                        onClick={() => setFilter({ type: "folder", name })}
+                        onClick={() => chooseFilter({ type: "folder", name })}
                         className={cn(
                           "flex min-w-0 flex-1 items-center gap-1.5 truncate py-1.5 pr-3 text-left text-xs",
                           folderActive ? "text-[var(--accent)]" : "text-[var(--muted)] hover:text-[var(--text)]",
@@ -201,7 +228,7 @@ export default function App() {
                       <SideItem
                         key={feed.id}
                         active={activeFilter.type === "feed" && activeFilter.id === feed.id}
-                        onClick={() => setFilter({ type: "feed", id: feed.id })}
+                        onClick={() => chooseFilter({ type: "feed", id: feed.id })}
                         label={feed.title}
                         indent
                       />
@@ -211,14 +238,17 @@ export default function App() {
               })}
             </aside>
 
-            <div className="flex w-[360px] shrink-0 flex-col border-r border-[var(--border)]">
+            <div className={cn(
+              "min-w-0 flex-1 flex-col border-[var(--border)] md:flex md:w-[360px] md:shrink-0 md:border-r",
+              selectedArticleId && "hidden md:flex",
+            )}>
               <div className="min-h-0 flex-1">
                 <ArticleList articles={visibleArticles} />
               </div>
             </div>
 
-            <div className="min-w-0 flex-1">
-              <ArticleReader />
+            <div className={cn("min-w-0 flex-1", selectedArticleId ? "block" : "hidden md:block")}>
+              <ArticleReader onBack={() => selectArticle(null)} />
             </div>
           </div>
         )}
@@ -231,12 +261,21 @@ export default function App() {
         {page === "feeds" && <FeedManager />}
         {page === "settings" && <SettingsPanel />}
       </main>
+
+      <nav className="flex shrink-0 items-stretch justify-around border-t border-[var(--border)] bg-[var(--surface)] pb-[env(safe-area-inset-bottom)] md:hidden">
+        <MobileNavButton active={page === "reader"} onClick={() => setPage("reader")} icon={<Rss size={18} />} label="阅读" />
+        <MobileNavButton active={page === "notes"} onClick={() => setPage("notes")} icon={<NotebookPen size={18} />} label="笔记" />
+        <MobileNavButton active={page === "topics"} onClick={() => setPage("topics")} icon={<Layers size={18} />} label="话题" />
+        <MobileNavButton active={page === "feeds"} onClick={() => setPage("feeds")} icon={<Folder size={18} />} label="订阅源" />
+        <MobileNavButton active={page === "settings"} onClick={() => setPage("settings")} icon={<SettingsIcon size={18} />} label="设置" />
+      </nav>
+
       <PodcastPlayer />
 
       {toast && (
         <div className={cn(
           "pointer-events-none fixed left-1/2 z-50 -translate-x-1/2 rounded-md bg-[var(--text)] px-4 py-2 text-xs text-[var(--surface)] shadow-lg",
-          hasPlayer ? "bottom-20" : "bottom-5",
+          hasPlayer ? "bottom-32 md:bottom-20" : "bottom-20 md:bottom-5",
         )}>
           {toast}
         </div>
@@ -276,6 +315,21 @@ function SideItem({
           {count}
         </span>
       )}
+    </button>
+  );
+}
+
+function MobileNavButton({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
+  return (
+    <button
+      onClick={onClick}
+      className={cn(
+        "flex min-w-14 flex-1 flex-col items-center justify-center gap-0.5 py-2 text-[10px] font-medium transition-colors",
+        active ? "text-[var(--accent)]" : "text-[var(--muted)]",
+      )}
+    >
+      {icon}
+      <span>{label}</span>
     </button>
   );
 }

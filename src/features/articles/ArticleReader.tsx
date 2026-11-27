@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
-import { ExternalLink, Star, RefreshCw, FileText, Headphones, StickyNote, Languages, X } from "lucide-react";
-import { openUrl } from "@tauri-apps/plugin-opener";
+import { ArrowLeft, ExternalLink, Star, RefreshCw, FileText, Headphones, StickyNote, Languages, X } from "lucide-react";
+import { openExternalUrl } from "../../lib/db";
 import { useAppStore } from "../../store/useAppStore";
 import { Button } from "../../shared/ui/Button";
 import { formatDistanceToNow } from "date-fns";
@@ -27,7 +27,7 @@ interface TranslationView {
   body: string;
 }
 
-export function ArticleReader() {
+export function ArticleReader({ onBack }: { onBack?: () => void }) {
   const settings = useAppStore((s) => s.settings);
   const convert = settings.convertTraditional;
   const selectedId = useAppStore((s) => s.selectedArticleId);
@@ -111,7 +111,7 @@ export function ArticleReader() {
       }
     }
     event.preventDefault();
-    void openUrl(href);
+    void openExternalUrl(href);
   };
 
   const handleBodySelection = () => {
@@ -252,12 +252,21 @@ export function ArticleReader() {
 
   return (
     <article
-      className="h-full overflow-y-auto px-8 py-7"
+      className="h-full overflow-y-auto px-4 py-5 md:px-8 md:py-7"
       onScroll={() => {
         setSelectionNote(null);
         setTranslationPopup(null);
       }}
     >
+      {onBack && (
+        <button
+          type="button"
+          onClick={onBack}
+          className="mb-4 inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-[var(--muted)] hover:bg-[var(--accent-soft)] md:hidden"
+        >
+          <ArrowLeft size={15} /> 返回列表
+        </button>
+      )}
       {selectionNote && (
         <div
           data-note-toolbar
@@ -351,7 +360,7 @@ export function ArticleReader() {
           </>
         )}
       </div>
-      <h1 className="text-2xl font-semibold leading-tight">
+      <h1 className="text-xl font-semibold leading-tight md:text-2xl">
         {translationView?.title ?? displayText(article.title, convert)}
       </h1>
       <div className="mt-5 flex flex-wrap gap-2">
@@ -368,7 +377,7 @@ export function ArticleReader() {
           </Button>
         )}
         {article.link && (
-          <Button size="sm" onClick={() => void openUrl(article.link!)}>
+          <Button size="sm" onClick={() => void openExternalUrl(article.link!)}>
             <ExternalLink size={14} /> 查看原文
           </Button>
         )}

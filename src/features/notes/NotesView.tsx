@@ -13,7 +13,7 @@ export function NotesView() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <div className="mx-auto max-w-3xl px-6 py-7">
+      <div className="mx-auto max-w-3xl px-4 py-5 md:px-6 md:py-7">
         {notes.length === 0 ? (
           <div className="rounded-lg border border-dashed border-[var(--border)] px-6 py-14 text-center text-[var(--muted)]">
             <p className="text-sm">还没有笔记</p>

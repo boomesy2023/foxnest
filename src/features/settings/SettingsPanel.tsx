@@ -1,10 +1,16 @@
 import { useEffect, useState } from "react";
+import { Smartphone } from "lucide-react";
 import { useAppStore } from "../../store/useAppStore";
 import type { AggregationStrength, TranslationEngine } from "../../types";
 import { cn } from "../../lib/cn";
 import { Button } from "../../shared/ui/Button";
 import { Input } from "../../shared/ui/Input";
-import { getTranslationApiKey } from "../../lib/db";
+import { getTranslationApiKey, isTauri } from "../../lib/db";
+
+interface BeforeInstallPromptEvent extends Event {
+  prompt(): Promise<void>;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+}
 
 const AUTO_REFRESH_OPTIONS = [
   { value: 0, label: "关闭" },
@@ -44,6 +50,17 @@ export function SettingsPanel() {
   const [hasApiKey, setHasApiKey] = useState(false);
   const [savingTranslation, setSavingTranslation] = useState(false);
   const [translationError, setTranslationError] = useState("");
+  const [installPrompt, setInstallPrompt] = useState<BeforeInstallPromptEvent | null>(null);
+  const browserMode = !isTauri();
+
+  useEffect(() => {
+    const handleInstallPrompt = (event: Event) => {
+      event.preventDefault();
+      setInstallPrompt(event as BeforeInstallPromptEvent);
+    };
+    window.addEventListener("beforeinstallprompt", handleInstallPrompt);
+    return () => window.removeEventListener("beforeinstallprompt", handleInstallPrompt);
+  }, []);
 
   useEffect(() => {
     setBaseUrl(settings.translationBaseUrl);
@@ -82,12 +99,51 @@ export function SettingsPanel() {
   };
 
   return (
-    <div className="h-full overflow-y-auto px-8 py-7">
+    <div className="h-full overflow-y-auto px-4 py-5 md:px-8 md:py-7">
       <div className="mx-auto max-w-2xl">
+        {browserMode && (
+          <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 p-4 text-xs leading-relaxed text-amber-900 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
+            <p className="font-medium">当前为浏览器 / PWA 模式</p>
+            <p className="mt-1">文章、笔记和设置保存在本机 IndexedDB，不会与桌面版自动同步。订阅源和翻译密钥仅保存在当前浏览器，安全性低于桌面系统钥匙串。</p>
+            <p className="mt-1">部分订阅源或翻译服务可能因跨域（CORS）限制无法访问；已缓存文章、全文和离线词典仍可阅读。</p>
+          </div>
+        )}
+
+        {browserMode && (
+          <section className="mb-7 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+            <div className="flex items-start gap-3">
+              <span className="mt-0.5 text-[var(--accent)]"><Smartphone size={18} /></span>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-sm font-medium">安装到主屏幕</h2>
+                {installPrompt ? (
+                  <>
+                    <p className="mt-1 text-xs text-[var(--muted)]">安装后可像普通应用一样打开，并支持离线阅读。</p>
+                    <Button
+                      size="sm"
+                      variant="primary"
+                      className="mt-3"
+                      onClick={() => {
+                        void installPrompt.prompt();
+                        void installPrompt.userChoice.finally(() => setInstallPrompt(null));
+                      }}
+                    >
+                      安装 Foxnest
+                    </Button>
+                  </>
+                ) : (
+                  <p className="mt-1 text-xs leading-relaxed text-[var(--muted)]">
+                    iPhone / iPad：用 Safari 打开后，点“分享”并选择“添加到主屏幕”。Android：在浏览器菜单中选择“安装应用”或“添加到主屏幕”。
+                  </p>
+                )}
+              </div>
+            </div>
+          </section>
+        )}
+
         <section>
           <h2 className="text-sm font-medium">聚合强度</h2>
           <p className="mt-1 text-xs text-[var(--muted)]">决定两篇文章被归为同一话题的严格程度</p>
-          <div className="mt-3 grid grid-cols-3 gap-2">
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
             {STRENGTHS.map((option) => (
               <button
                 key={option.value}
@@ -175,7 +231,7 @@ export function SettingsPanel() {
               />
             </button>
           </div>
-          <div className="mt-3 grid grid-cols-3 gap-2">
+          <div className="mt-3 grid gap-2 sm:grid-cols-3">
             {TRANSLATION_ENGINES.map((option) => (
               <button
                 key={option.value}
@@ -220,7 +276,7 @@ export function SettingsPanel() {
                     type="password"
                     value={apiKey}
                     onChange={(event) => setApiKey(event.target.value)}
-                    placeholder={hasApiKey ? "留空则保留现有密钥" : "可选，保存在系统钥匙串"}
+                    placeholder={hasApiKey ? "留空则保留现有密钥" : browserMode ? "保存在当前浏览器（明文）" : "可选，保存在系统钥匙串"}
                     autoComplete="off"
                   />
                 </label>

@@ -153,7 +153,9 @@ select {
   margin: 1.8em 0;
 }
 .article-body table {
-  width: 100%;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
   border-collapse: collapse;
   margin: 1.2em 0;
   font-size: 13px;

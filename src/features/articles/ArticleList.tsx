@@ -88,7 +88,7 @@ export function ArticleList({ articles, emptyText }: ArticleListProps) {
                       )}
                     </div>
                   </div>
-                  <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                  <div className="flex shrink-0 items-center gap-1 opacity-100 transition-opacity md:opacity-0 md:group-hover:opacity-100">
                     {article.audioUrl && (
                       <button
                         title={playingId === article.id ? (paused ? "继续播放" : "暂停") : "播放这一期"}

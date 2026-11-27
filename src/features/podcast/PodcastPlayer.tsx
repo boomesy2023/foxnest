@@ -14,18 +14,18 @@ export function PodcastPlayer() {
   if (!episode) return null;
 
   return (
-    <footer className="flex h-[68px] shrink-0 items-center gap-3 border-t border-[var(--border)] bg-[var(--surface)] px-4">
-      <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)]">
+    <footer className="flex h-[68px] shrink-0 items-center gap-2 border-t border-[var(--border)] bg-[var(--surface)] px-3 md:gap-3 md:px-4">
+      <span className="hidden h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[var(--accent-soft)] text-[var(--accent)] sm:flex">
         <Headphones size={17} />
       </span>
-      <div className="w-44 shrink-0 min-w-0">
+      <div className="min-w-0 flex-1 md:w-44 md:flex-none">
         <p className="truncate text-[12px] font-medium">{displayText(episode.title, convert)}</p>
         <p className={`mt-0.5 truncate text-[10px] ${audio.error ? "text-red-500" : "text-[var(--muted)]"}`}>
           {audio.error ?? displayText(episode.feedTitle, convert)}
         </p>
       </div>
       <TransportButtons compact />
-      <ProgressBar className="min-w-0 flex-1" />
+      <ProgressBar className="hidden min-w-0 flex-1 md:flex" />
       <RateButton />
       <button
         type="button"

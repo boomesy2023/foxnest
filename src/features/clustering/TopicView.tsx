@@ -76,7 +76,7 @@ function TopicCard({ topic, allTopics }: { topic: TopicWithArticles; allTopics: 
                   event.stopPropagation();
                   void splitArticle(topic.id, article.id);
                 }}
-                className="rounded p-1 text-[var(--muted)] opacity-0 hover:bg-[var(--border)] group-hover:opacity-100"
+                className="rounded p-1 text-[var(--muted)] opacity-100 hover:bg-[var(--border)] md:opacity-0 md:group-hover:opacity-100"
               >
                 <Scissors size={13} />
               </button>

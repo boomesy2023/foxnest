@@ -1,33 +1,59 @@
-import Database from "@tauri-apps/plugin-sql";
 import { invoke } from "@tauri-apps/api/core";
+import { deleteBrowserValue, readBrowserValue, writeBrowserValue } from "./browserStorage";
 
-let dbPromise: Promise<Database> | null = null;
+export interface AppDatabase {
+  select<T>(query: string, params?: unknown[]): Promise<T>;
+  execute(query: string, params?: unknown[]): Promise<unknown>;
+  close(): Promise<void>;
+}
+
+let dbPromise: Promise<AppDatabase> | null = null;
+
+export function isTauri(): boolean {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+function feedCredentialKey(feedId: string): string {
+  return `credential:feed:${feedId}`;
+}
+
+const translationCredentialKey = "credential:translation-api-key";
 
 export function saveFeedToken(feedId: string, token: string): Promise<void> {
-  return invoke("save_feed_token", { feedId, token });
+  if (isTauri()) return invoke("save_feed_token", { feedId, token });
+  return token.trim()
+    ? writeBrowserValue(feedCredentialKey(feedId), token.trim())
+    : deleteBrowserValue(feedCredentialKey(feedId));
 }
 
 export function getFeedToken(feedId: string): Promise<string | null> {
-  return invoke("get_feed_token", { feedId });
+  if (isTauri()) return invoke("get_feed_token", { feedId });
+  return readBrowserValue<string>(feedCredentialKey(feedId)).then((token) => token ?? null);
 }
 
 export function deleteFeedToken(feedId: string): Promise<void> {
-  return invoke("delete_feed_token", { feedId });
+  if (isTauri()) return invoke("delete_feed_token", { feedId });
+  return deleteBrowserValue(feedCredentialKey(feedId));
 }
 
 export function saveTranslationApiKey(key: string): Promise<void> {
-  return invoke("save_translation_api_key", { key });
+  if (isTauri()) return invoke("save_translation_api_key", { key });
+  return key.trim()
+    ? writeBrowserValue(translationCredentialKey, key.trim())
+    : deleteBrowserValue(translationCredentialKey);
 }
 
 export function getTranslationApiKey(): Promise<string | null> {
-  return invoke("get_translation_api_key");
+  if (isTauri()) return invoke("get_translation_api_key");
+  return readBrowserValue<string>(translationCredentialKey).then((key) => key ?? null);
 }
 
 export function deleteTranslationApiKey(): Promise<void> {
-  return invoke("delete_translation_api_key");
+  if (isTauri()) return invoke("delete_translation_api_key");
+  return deleteBrowserValue(translationCredentialKey);
 }
 
-async function migrateLegacyTokens(db: Database): Promise<void> {
+async function migrateLegacyTokens(db: AppDatabase): Promise<void> {
   const rows = await db.select<{ id: string; api_token: string | null }[]>(
     "SELECT id, api_token FROM feeds WHERE api_token IS NOT NULL AND api_token <> ''",
   );
@@ -39,7 +65,7 @@ async function migrateLegacyTokens(db: Database): Promise<void> {
   await db.execute("UPDATE feeds SET api_token = NULL WHERE api_token = ''");
 }
 
-async function initializeSchema(db: Database): Promise<void> {
+async function initializeSchema(db: AppDatabase): Promise<void> {
   const articleTable = await db.select<{ name: string }[]>(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'articles'",
   );
@@ -150,10 +176,17 @@ async function initializeSchema(db: Database): Promise<void> {
 }
 
 /** Lazily open the single app database, creating schema on first run. */
-export function getDb(): Promise<Database> {
+export function getDb(): Promise<AppDatabase> {
   if (!dbPromise) {
     dbPromise = (async () => {
-      const db = await Database.load("sqlite:foxnest.db");
+      let db: AppDatabase;
+      if (isTauri()) {
+        const { default: Database } = await import("@tauri-apps/plugin-sql");
+        db = await Database.load("sqlite:foxnest.db") as unknown as AppDatabase;
+      } else {
+        const { openBrowserDatabase } = await import("./browserDb");
+        db = await openBrowserDatabase();
+      }
       await initializeSchema(db);
       await migrateLegacyTokens(db);
       return db;
@@ -170,18 +203,40 @@ export interface FetchResult {
   status: number;
 }
 
+async function browserFetch(
+  url: string,
+  init: RequestInit,
+  timeoutSecs = 30,
+): Promise<FetchResult> {
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutSecs * 1000);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    return { body: await response.text(), status: response.status };
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(`请求超时（${timeoutSecs} 秒）`);
+    }
+    throw new Error("浏览器请求失败，目标可能不允许跨域访问（CORS）");
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
 /** Fetch via Rust to bypass WebView CORS. */
 export function fetchUrl(
   url: string,
   headers?: Record<string, string>,
   timeoutSecs?: number,
 ): Promise<FetchResult> {
-  // Tauri 2 maps JS camelCase keys to Rust snake_case command params.
-  return invoke("fetch_url", {
-    url,
-    headers: headers ?? null,
-    timeoutSecs: timeoutSecs ?? null,
-  });
+  if (isTauri()) {
+    return invoke("fetch_url", {
+      url,
+      headers: headers ?? null,
+      timeoutSecs: timeoutSecs ?? null,
+    });
+  }
+  return browserFetch(url, { headers }, timeoutSecs);
 }
 
 export function postJson(
@@ -190,30 +245,55 @@ export function postJson(
   headers?: Record<string, string>,
   timeoutSecs?: number,
 ): Promise<FetchResult> {
-  return invoke("post_json", {
+  if (isTauri()) {
+    return invoke("post_json", {
+      url,
+      body: JSON.stringify(body),
+      headers: headers ?? null,
+      timeoutSecs: timeoutSecs ?? null,
+    });
+  }
+  return browserFetch(
     url,
-    body: JSON.stringify(body),
-    headers: headers ?? null,
-    timeoutSecs: timeoutSecs ?? null,
-  });
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...headers },
+      body: JSON.stringify(body),
+    },
+    timeoutSecs,
+  );
 }
 
 /** Open an in-app browser so the user can pass an anti-bot challenge. */
 export function openVerificationWindow(siteUrl: string, feedUrl: string): Promise<void> {
-  return invoke("open_verification_window", { siteUrl, feedUrl });
+  if (isTauri()) return invoke("open_verification_window", { siteUrl, feedUrl });
+  window.open(siteUrl, "_blank", "noopener,noreferrer");
+  return Promise.resolve();
 }
 
 /** Whether a fresh, verified copy of this feed is cached on the Rust side. */
 export function isFeedVerified(url: string): Promise<boolean> {
-  return invoke("is_feed_verified", { url });
+  if (isTauri()) return invoke("is_feed_verified", { url });
+  return Promise.resolve(false);
+}
+
+export async function openExternalUrl(url: string): Promise<void> {
+  if (isTauri()) {
+    const { openUrl } = await import("@tauri-apps/plugin-opener");
+    await openUrl(url);
+    return;
+  }
+  window.open(url, "_blank", "noopener,noreferrer");
 }
 
 /** Drop the verified cache entry for a feed, forcing a fresh network fetch. */
 export function clearVerifiedFeed(url: string): Promise<void> {
-  return invoke("clear_verified_feed", { url });
+  if (isTauri()) return invoke("clear_verified_feed", { url });
+  return Promise.resolve();
 }
 
 /** Close the verification window after its feed has been captured. */
 export function closeVerificationWindow(): Promise<void> {
-  return invoke("close_verification_window");
+  if (isTauri()) return invoke("close_verification_window");
+  return Promise.resolve();
 }

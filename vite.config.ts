@@ -1,13 +1,58 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
+import { VitePWA } from "vite-plugin-pwa";
 // @ts-expect-error type error without @types/node package
 import process from "node:process";
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(() => ({
-  plugins: [react(), tailwindcss()],
+  plugins: [
+    react(),
+    tailwindcss(),
+    VitePWA({
+      registerType: "autoUpdate",
+      includeAssets: [
+        "icons/*.png",
+        "dictionary/en-zh.json",
+        "dictionary/ECDICT-LICENSE.txt",
+      ],
+      manifest: {
+        name: "Foxnest",
+        short_name: "Foxnest",
+        description: "本地优先的 RSS 阅读器，支持话题归集、划词笔记与离线翻译。",
+        lang: "zh-CN",
+        start_url: "/",
+        scope: "/",
+        display: "standalone",
+        orientation: "any",
+        background_color: "#f7f7f5",
+        theme_color: "#b4532a",
+        icons: [
+          { src: "/icons/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
+          { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+          { src: "/icons/icon-512.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+        ],
+      },
+      workbox: {
+        globPatterns: ["**/*.{js,css,html,json,png,svg,wasm,txt}"],
+        maximumFileSizeToCacheInBytes: 4 * 1024 * 1024,
+        runtimeCaching: [
+          {
+            urlPattern: ({ request }) => request.destination === "image",
+            handler: "CacheFirst",
+            options: {
+              cacheName: "foxnest-images",
+              expiration: { maxEntries: 100, maxAgeSeconds: 30 * 24 * 60 * 60 },
+              cacheableResponse: { statuses: [0, 200] },
+            },
+          },
+        ],
+      },
+      devOptions: { enabled: false },
+    }),
+  ],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
