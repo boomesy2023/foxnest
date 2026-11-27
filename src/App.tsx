@@ -131,10 +131,10 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-dvh flex-col">
+    <div className="app-shell flex flex-col overflow-hidden pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pb-0">
       <header className="flex min-h-12 shrink-0 items-center gap-3 border-b border-[var(--border)] bg-[var(--surface)] px-4 pt-[env(safe-area-inset-top)]">
         <button onClick={() => setPage("reader")} className="flex items-center gap-2 text-[15px] font-semibold">
-          <span className="text-[var(--accent)]">F</span>
+          <img src="/icons/icon.svg" alt="" className="h-6 w-6 rounded-md" />
           <span>Foxnest</span>
         </button>
         <div className="ml-4 hidden gap-1 md:flex">
@@ -154,7 +154,7 @@ export default function App() {
         </button>
       </header>
 
-      <main className="min-h-0 flex-1">
+      <main className="min-h-0 flex-1 overflow-hidden">
         {page === "reader" && (
           <div className="relative flex h-full">
             {filtersOpen && (
@@ -166,7 +166,10 @@ export default function App() {
               />
             )}
             <aside className={cn(
-              "fixed bottom-16 left-0 top-12 z-40 w-64 overflow-y-auto border-r border-[var(--border)] bg-[var(--surface)] py-3 md:static md:z-auto md:w-48 md:translate-x-0",
+              "fixed left-0 top-[calc(3rem+env(safe-area-inset-top))] z-40 w-64 overflow-y-auto border-r border-[var(--border)] bg-[var(--surface)] py-3 md:static md:z-auto md:w-44 md:translate-x-0",
+              hasPlayer
+                ? "bottom-[calc(7.25rem+env(safe-area-inset-bottom))]"
+                : "bottom-[calc(3.5rem+env(safe-area-inset-bottom))]",
               filtersOpen ? "translate-x-0" : "-translate-x-full",
             )}>
               <p className="px-3 pb-2 text-[11px] font-medium uppercase tracking-wide text-[var(--muted)]">筛选</p>
@@ -239,7 +242,7 @@ export default function App() {
             </aside>
 
             <div className={cn(
-              "min-w-0 flex-1 flex-col border-[var(--border)] md:flex md:w-[360px] md:shrink-0 md:border-r",
+              "flex min-w-0 flex-1 flex-col border-[var(--border)] md:w-[320px] md:flex-none md:border-r",
               selectedArticleId && "hidden md:flex",
             )}>
               <div className="min-h-0 flex-1">
@@ -262,7 +265,7 @@ export default function App() {
         {page === "settings" && <SettingsPanel />}
       </main>
 
-      <nav className="flex shrink-0 items-stretch justify-around border-t border-[var(--border)] bg-[var(--surface)] pb-[env(safe-area-inset-bottom)] md:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-40 flex items-stretch justify-around border-t border-[var(--border)] bg-[var(--surface)] pb-[env(safe-area-inset-bottom)] md:hidden">
         <MobileNavButton active={page === "reader"} onClick={() => setPage("reader")} icon={<Rss size={18} />} label="阅读" />
         <MobileNavButton active={page === "notes"} onClick={() => setPage("notes")} icon={<NotebookPen size={18} />} label="笔记" />
         <MobileNavButton active={page === "topics"} onClick={() => setPage("topics")} icon={<Layers size={18} />} label="话题" />
@@ -275,7 +278,9 @@ export default function App() {
       {toast && (
         <div className={cn(
           "pointer-events-none fixed left-1/2 z-50 -translate-x-1/2 rounded-md bg-[var(--text)] px-4 py-2 text-xs text-[var(--surface)] shadow-lg",
-          hasPlayer ? "bottom-32 md:bottom-20" : "bottom-20 md:bottom-5",
+          hasPlayer
+            ? "bottom-[calc(8.25rem+env(safe-area-inset-bottom))] md:bottom-20"
+            : "bottom-[calc(5rem+env(safe-area-inset-bottom))] md:bottom-5",
         )}>
           {toast}
         </div>

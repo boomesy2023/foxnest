@@ -38,7 +38,7 @@ export function ArticleList({ articles, emptyText }: ArticleListProps) {
 
   return (
     <section className="flex h-full min-h-0 flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         {sorted.length === 0 ? (
           <p className="px-4 py-10 text-center text-[var(--muted)]">
             {emptyText ?? "暂无文章，可在「订阅源」中逐个刷新"}

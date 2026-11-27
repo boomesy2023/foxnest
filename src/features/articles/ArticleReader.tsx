@@ -45,6 +45,9 @@ export function ArticleReader({ onBack }: { onBack?: () => void }) {
   const [translating, setTranslating] = useState(false);
   const [translationProgress, setTranslationProgress] = useState("");
   const [translationError, setTranslationError] = useState("");
+  // Set while the pointer is down on the selection toolbar so the selectionchange
+  // caused by that tap does not dismiss the toolbar before its click fires.
+  const toolbarPointerDown = useRef(false);
 
   const article = articles.find((item) => item.id === selectedId);
   const translationConfigKey = `${settings.translationEngine}:${settings.translationBaseUrl}:${settings.translationModel}`;
@@ -67,6 +70,57 @@ export function ArticleReader({ onBack }: { onBack?: () => void }) {
       setTranslationView(null);
     }
   }, [settings.translationEnabled]);
+
+  const handleBodySelection = () => {
+    const selection = window.getSelection();
+    const body = bodyRef.current;
+    if (!selection || !body || selection.rangeCount === 0 || selection.isCollapsed) {
+      setSelectionNote(null);
+      setTranslationPopup(null);
+      return;
+    }
+    const range = selection.getRangeAt(0);
+    if (!body.contains(range.commonAncestorContainer)) {
+      setSelectionNote(null);
+      setTranslationPopup(null);
+      return;
+    }
+    const quote = selection.toString().replace(/\s+/g, " ").trim();
+    if (!quote) {
+      setSelectionNote(null);
+      setTranslationPopup(null);
+      return;
+    }
+    const rect = range.getBoundingClientRect();
+    const fallback = body.getBoundingClientRect();
+    const x = Math.min(
+      Math.max(12, rect.left + rect.width / 2 - 80),
+      Math.max(12, window.innerWidth - 190),
+    );
+    // The system selection menu (Android/iOS) shows above the selection, so on
+    // touch devices the toolbar goes below it, clear of the selection handles.
+    const top = rect.height > 0 ? rect.top : fallback.top;
+    const bottom = rect.height > 0 ? rect.bottom : fallback.top + 24;
+    const below = window.matchMedia("(pointer: coarse)").matches && bottom + 76 < window.innerHeight;
+    const y = below ? bottom + 28 : Math.max(12, top - 42);
+    setTranslationPopup(null);
+    setSelectionNote({ quote, x, y });
+  };
+
+  // Touch selection (long-press + handles) fires selectionchange but not mouseup/keyup.
+  useEffect(() => {
+    let timer = 0;
+    const onChange = () => {
+      window.clearTimeout(timer);
+      if (toolbarPointerDown.current) return;
+      timer = window.setTimeout(handleBodySelection, 60);
+    };
+    document.addEventListener("selectionchange", onChange);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener("selectionchange", onChange);
+    };
+  }, []);
 
   if (!article) {
     return (
@@ -112,37 +166,6 @@ export function ArticleReader({ onBack }: { onBack?: () => void }) {
     }
     event.preventDefault();
     void openExternalUrl(href);
-  };
-
-  const handleBodySelection = () => {
-    const selection = window.getSelection();
-    const body = bodyRef.current;
-    if (!selection || !body || selection.rangeCount === 0 || selection.isCollapsed) {
-      setSelectionNote(null);
-      setTranslationPopup(null);
-      return;
-    }
-    const range = selection.getRangeAt(0);
-    if (!body.contains(range.commonAncestorContainer)) {
-      setSelectionNote(null);
-      setTranslationPopup(null);
-      return;
-    }
-    const quote = selection.toString().replace(/\s+/g, " ").trim();
-    if (!quote) {
-      setSelectionNote(null);
-      setTranslationPopup(null);
-      return;
-    }
-    const rect = range.getBoundingClientRect();
-    const fallback = body.getBoundingClientRect();
-    const x = Math.min(
-      Math.max(12, rect.left + rect.width / 2 - 80),
-      Math.max(12, window.innerWidth - 190),
-    );
-    const y = Math.max(12, (rect.height > 0 ? rect.top : fallback.top) - 42);
-    setTranslationPopup(null);
-    setSelectionNote({ quote, x, y });
   };
 
   const saveSelectionNote = () => {
@@ -252,7 +275,7 @@ export function ArticleReader({ onBack }: { onBack?: () => void }) {
 
   return (
     <article
-      className="h-full overflow-y-auto px-4 py-5 md:px-8 md:py-7"
+      className="h-full overflow-y-auto px-4 py-5 md:px-6 md:py-7 xl:px-8"
       onScroll={() => {
         setSelectionNote(null);
         setTranslationPopup(null);
@@ -273,6 +296,10 @@ export function ArticleReader({ onBack }: { onBack?: () => void }) {
           className="fixed z-40 inline-flex items-center gap-1 rounded-md bg-[var(--accent)] p-1 text-xs font-medium text-white shadow-lg"
           style={{ left: selectionNote.x, top: selectionNote.y }}
           onMouseDown={(event) => event.preventDefault()}
+          onPointerDown={() => { toolbarPointerDown.current = true; }}
+          onPointerUp={() => { toolbarPointerDown.current = false; }}
+          onPointerCancel={() => { toolbarPointerDown.current = false; }}
+          onPointerLeave={() => { toolbarPointerDown.current = false; }}
         >
           {settings.translationEnabled && (
             <>
