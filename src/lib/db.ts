@@ -66,6 +66,16 @@ async function migrateLegacyTokens(db: AppDatabase): Promise<void> {
 }
 
 async function initializeSchema(db: AppDatabase): Promise<void> {
+  const feedTable = await db.select<{ name: string }[]>(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'feeds'",
+  );
+  let missingFeedColumns: string[] = [];
+  if (feedTable.length > 0) {
+    const columns = await db.select<{ name: string }[]>("PRAGMA table_info(feeds)");
+    const existing = new Set(columns.map((column) => column.name));
+    missingFeedColumns = ["last_error TEXT"].filter((column) => !existing.has(column.split(" ")[0]));
+  }
+
   const articleTable = await db.select<{ name: string }[]>(
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'articles'",
   );
@@ -97,6 +107,7 @@ async function initializeSchema(db: AppDatabase): Promise<void> {
       api_base TEXT,
       api_token TEXT,
       last_fetched_at INTEGER,
+      last_error TEXT,
       created_at INTEGER NOT NULL
     )`,
     `CREATE TABLE IF NOT EXISTS articles (
@@ -153,6 +164,7 @@ async function initializeSchema(db: AppDatabase): Promise<void> {
     "INSERT INTO settings (key, value) VALUES ('entityExtractorVersion', '2') ON CONFLICT(key) DO UPDATE SET value = '2'",
     "DELETE FROM topic_articles WHERE topic_id IN (SELECT id FROM topics WHERE is_manual = 0)",
     "DELETE FROM topics WHERE is_manual = 0",
+    ...missingFeedColumns.map((column) => `ALTER TABLE feeds ADD COLUMN ${column}`),
     ...missingColumns.map((column) => `ALTER TABLE articles ADD COLUMN ${column}`),
     "DELETE FROM articles WHERE fingerprint = ''",
     `DELETE FROM articles

@@ -63,6 +63,9 @@ export default defineConfig(() => ({
     port: 1420,
     strictPort: true,
     host: host || false,
+    proxy: {
+      "/functions/v1/app": "http://127.0.0.1:8000",
+    },
     hmr: host
       ? {
           protocol: "ws",

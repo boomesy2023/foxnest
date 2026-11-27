@@ -11,6 +11,7 @@ export interface Feed {
   /** Base URL for Miniflux / FreshRSS servers. */
   apiBase: string | null;
   lastFetchedAt: number | null;
+  lastError: string | null;
   createdAt: number;
 }
 

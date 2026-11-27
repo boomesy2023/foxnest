@@ -9,6 +9,7 @@ interface FeedRow {
   folder: string | null;
   api_base: string | null;
   last_fetched_at: number | null;
+  last_error: string | null;
   created_at: number;
 }
 
@@ -21,6 +22,7 @@ function toFeed(row: FeedRow): Feed {
     folder: row.folder,
     apiBase: row.api_base,
     lastFetchedAt: row.last_fetched_at,
+    lastError: row.last_error,
     createdAt: row.created_at,
   };
 }
@@ -40,8 +42,8 @@ export async function getFeed(id: string): Promise<Feed | null> {
 export async function insertFeed(feed: Feed, apiToken: string | null = null): Promise<void> {
   const db = await getDb();
   await db.execute(
-    `INSERT INTO feeds (id, title, url, kind, folder, api_base, api_token, last_fetched_at, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+    `INSERT INTO feeds (id, title, url, kind, folder, api_base, api_token, last_fetched_at, last_error, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, ?)`,
     [
       feed.id,
       feed.title,
@@ -50,6 +52,7 @@ export async function insertFeed(feed: Feed, apiToken: string | null = null): Pr
       feed.folder,
       feed.apiBase,
       feed.lastFetchedAt,
+      feed.lastError,
       feed.createdAt,
     ],
   );
@@ -63,7 +66,7 @@ export async function insertFeed(feed: Feed, apiToken: string | null = null): Pr
 
 export async function updateFeed(
   id: string,
-  patch: Partial<Pick<Feed, "title" | "folder" | "lastFetchedAt">>,
+  patch: Partial<Pick<Feed, "title" | "folder" | "lastFetchedAt" | "lastError">>,
 ): Promise<void> {
   const db = await getDb();
   const sets: string[] = [];
@@ -79,6 +82,10 @@ export async function updateFeed(
   if (patch.lastFetchedAt !== undefined) {
     sets.push("last_fetched_at = ?");
     values.push(patch.lastFetchedAt);
+  }
+  if (patch.lastError !== undefined) {
+    sets.push("last_error = ?");
+    values.push(patch.lastError);
   }
   if (sets.length === 0) return;
   values.push(id);

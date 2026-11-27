@@ -1,4 +1,4 @@
-import { fetchUrl } from "../../lib/db";
+import { fetchUrl, isTauri } from "../../lib/db";
 import { stripHtml, truncate } from "../../lib/utils";
 import { sanitizeHtml } from "../articles/fullTextService";
 import { findArticleByFingerprint, insertArticle, setArticleAudio, setArticleContentHtml } from "../articles/articleRepo";
@@ -142,6 +142,48 @@ function alternateHost(url: string): string | null {
   }
 }
 
+async function fetchFeedViaProxy(url: string, timeoutSecs: number): Promise<{ status: number; body: string }> {
+  const endpoint = new URL("/functions/v1/app/api/feed", window.location.origin);
+  endpoint.searchParams.set("url", url);
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), timeoutSecs * 1000);
+  try {
+    const response = await fetch(endpoint, {
+      headers: { Accept: FEED_ACCEPT },
+      signal: controller.signal,
+      cache: "no-store",
+    });
+    const body = await response.text();
+    if (response.status >= 500) {
+      let message = "订阅源代理暂时不可用，请稍后重试";
+      try {
+        const payload = JSON.parse(body) as { error?: unknown };
+        if (typeof payload.error === "string") message = payload.error;
+      } catch {
+        // The gateway may return HTML for an unavailable function.
+      }
+      throw new Error(message);
+    }
+    return { status: response.status, body };
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(`订阅源代理请求超时（${timeoutSecs} 秒）`);
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+
+async function fetchFeedTarget(url: string, timeoutSecs: number): Promise<{ status: number; body: string }> {
+  try {
+    return await fetchUrl(url, { Accept: FEED_ACCEPT }, timeoutSecs);
+  } catch (error) {
+    if (isTauri()) throw error;
+    return fetchFeedViaProxy(url, timeoutSecs);
+  }
+}
+
 /**
  * Fetch a feed, retrying the www/naked-domain twin when the original address
  * answers with an HTML page (typically a WAF challenge such as 36kr.com/feed,
@@ -151,13 +193,13 @@ async function fetchFeedResponse(
   url: string,
   timeoutSecs: number,
 ): Promise<{ status: number; body: string }> {
-  const primary = await fetchUrl(url, { Accept: FEED_ACCEPT }, timeoutSecs);
+  const primary = await fetchFeedTarget(url, timeoutSecs);
   if (primary.status >= 400 || !looksLikeHtml(primary.body)) return primary;
 
   const alternate = alternateHost(url);
   if (alternate && alternate !== url) {
     try {
-      const retry = await fetchUrl(alternate, { Accept: FEED_ACCEPT }, timeoutSecs);
+      const retry = await fetchFeedTarget(alternate, timeoutSecs);
       if (retry.status < 400 && !looksLikeHtml(retry.body)) return retry;
     } catch {
       // Keep the original response so the caller reports its specific error.

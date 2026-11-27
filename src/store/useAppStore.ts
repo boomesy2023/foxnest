@@ -210,6 +210,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         } catch (error) {
           result = { added: 0, duplicates: 0, total: 0, error: errorText(error) };
         }
+        const lastError = result.error ?? null;
+        if (feed.lastError !== lastError) {
+          await updateFeed(feed.id, { lastError });
+          set({ feeds: get().feeds.map((item) => item.id === feed.id ? { ...item, lastError } : item) });
+        }
         reports.push({ feedTitle: feed.title, added: result.added, duplicates: result.duplicates, error: result.error });
         set({ reports: [...reports] });
         if (result.added > 0) {
@@ -258,6 +263,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         result = await refreshFeed(feed);
       } catch (error) {
         result = { added: 0, duplicates: 0, total: 0, error: errorText(error) };
+      }
+      const lastError = result.error ?? null;
+      if (feed.lastError !== lastError) {
+        await updateFeed(feed.id, { lastError });
+        set({ feeds: get().feeds.map((item) => item.id === id ? { ...item, lastError } : item) });
       }
       let topics = get().topics;
       if (result.added > 0) {
@@ -320,17 +330,23 @@ export const useAppStore = create<AppState>((set, get) => ({
         title = input.url;
       }
     }
+    const id = makeId("f_");
     await insertFeed({
-      id: makeId("f_"),
+      id,
       title: title || input.url,
       url: input.url,
       kind: input.kind ?? "rss",
       folder: input.folder?.trim() || null,
       apiBase: input.apiBase ?? null,
       lastFetchedAt: null,
+      lastError: null,
       createdAt: Date.now(),
     }, input.apiToken?.trim() || null);
     set({ feeds: await listFeeds(), toast: "订阅源已添加" });
+    while (refreshInFlight) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    await get().refreshOne(id);
   },
 
   setFeedFolder: async (id, folder) => {

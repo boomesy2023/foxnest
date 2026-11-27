@@ -70,6 +70,7 @@ export async function importOpml(xml: string): Promise<number> {
       folder: feed.folder,
       apiBase: null,
       lastFetchedAt: null,
+      lastError: null,
       createdAt: Date.now(),
     });
     existing.add(feed.url);
