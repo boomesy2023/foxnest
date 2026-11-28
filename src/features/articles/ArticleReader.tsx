@@ -170,16 +170,18 @@ export function ArticleReader({ queue, onBack }: { queue: Article[]; onBack?: ()
   const hasFullHtml = Boolean(article.fullContentHtml);
   const hasFull = hasFullHtml || Boolean(article.fullContent);
   const isEpisode = isPodcastEpisode(article);
-  const hasTextFallback = !hasFullHtml && Boolean(article.fullContent);
   const excerpt = article.content || article.summary;
-  const isExcerpt = !hasFull && !hasDigest && !hasTextFallback;
-  const fullTextFailed = !hasFull && !hasTextFallback && article.fullContentFetchedAt > 0;
+  const isExcerpt = !hasFull && !hasDigest;
 
-  const fetchFullText = async (openAfterFetch = false) => {
-    translationCache.current.delete(article.id);
-    setTranslationView(null);
+  // Fetch the original page and extract readable content (FeedFox-style), then
+  // show the cleaned result in the in-app dialog. Cached full text opens directly.
+  const openFullText = async () => {
+    if (hasFull) {
+      setFullTextOpen(true);
+      return;
+    }
     await loadFullText(article.id, true);
-    if (!openAfterFetch || useAppStore.getState().selectedArticleId !== article.id) return;
+    if (useAppStore.getState().selectedArticleId !== article.id) return;
     const updated = useAppStore.getState().articles.find((item) => item.id === article.id);
     if (updated?.fullContentHtml || updated?.fullContent) setFullTextOpen(true);
   };
@@ -313,7 +315,7 @@ export function ArticleReader({ queue, onBack }: { queue: Article[]; onBack?: ()
     }
     return (
       <p className="text-[var(--muted)]">
-        {isEpisode ? "这一期没有提供文字介绍，直接播放即可。" : "该订阅源未提供正文，点击「获取全文」尝试从原文抓取。"}
+        {isEpisode ? "这一期没有提供文字介绍，直接播放即可。" : "该订阅源未提供正文，点击「查看全文」抓取原文阅读。"}
       </p>
     );
   };
@@ -476,55 +478,27 @@ export function ArticleReader({ queue, onBack }: { queue: Article[]; onBack?: ()
           </Button>
         )}
         {article.link && !isEpisode && (
-          hasFull ? (
-            <>
-              <Button size="sm" variant="primary" onClick={() => setFullTextOpen(true)}>
-                <FileText size={14} /> 查看全文
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent-soft)]"
-                disabled={loadingFull}
-                onClick={() => void fetchFullText()}
-                title="重新抓取全文"
-              >
-                <RefreshCw size={14} className={loadingFull ? "animate-spin" : ""} />
-                {loadingFull ? "刷新中…" : "刷新全文"}
-              </Button>
-            </>
-          ) : (
-            <Button
-              size="sm"
-              variant="primary"
-              disabled={loadingFull}
-              onClick={() => void fetchFullText(true)}
-              title="抓取网页全文并在弹窗中打开"
-            >
-              <RefreshCw size={14} className={loadingFull ? "animate-spin" : ""} />
-              {loadingFull ? "获取全文中…" : fullTextFailed ? "重试全文" : "获取全文"}
-            </Button>
-          )
+          <Button
+            size="sm"
+            variant="primary"
+            disabled={loadingFull}
+            onClick={() => void openFullText()}
+            title={hasFull ? "在弹窗中阅读全文" : "抓取原文正文并在弹窗中打开"}
+          >
+            <RefreshCw size={14} className={loadingFull ? "animate-spin" : ""} />
+            {loadingFull ? "获取全文中…" : "查看全文"}
+          </Button>
         )}
       </div>
       {isEpisode && <EpisodeAudio article={article} />}
       <div className="mt-7 border-t border-[var(--border)] pt-6">
         {translationError && <p className="mb-4 text-xs text-red-600">{translationError}</p>}
-        {loadingFull && !hasFull && !hasDigest ? (
-          <p className="text-[var(--muted)]">正在获取网页全文…</p>
-        ) : (
-          <>
-            {loadingFull && hasDigest && <p className="mb-4 text-xs text-[var(--muted)]">正在获取网页全文…</p>}
-            <div ref={bodyRef} onMouseUp={handleBodySelection} onKeyUp={handleBodySelection}>
-              {renderBody()}
-            </div>
-          </>
-        )}
-        {(isExcerpt || fullTextFailed) && !loadingFull && !isEpisode && (
+        <div ref={bodyRef} onMouseUp={handleBodySelection} onKeyUp={handleBodySelection}>
+          {renderBody()}
+        </div>
+        {isExcerpt && !isEpisode && (
           <p className="mt-6 border-t border-[var(--border)] pt-4 text-xs text-[var(--muted)]">
-            {fullTextFailed
-              ? "全文抓取失败，可点击「重试全文」再试一次。"
-              : "当前为订阅源摘要。点「获取全文」在应用内阅读完整内容。"}
+            当前为订阅源摘要。点「查看全文」抓取原文正文阅读完整内容。
           </p>
         )}
         {(previousArticle || nextArticle) && (
@@ -548,12 +522,12 @@ export function ArticleReader({ queue, onBack }: { queue: Article[]; onBack?: ()
           </div>
         )}
       </div>
-      {fullTextOpen && hasFull && (
+      {fullTextOpen && article.link && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-3 md:p-6"
           role="dialog"
           aria-modal="true"
-          aria-label="文章全文"
+          aria-label="查看全文"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) setFullTextOpen(false);
           }}
@@ -577,7 +551,7 @@ export function ArticleReader({ queue, onBack }: { queue: Article[]; onBack?: ()
               </button>
             </div>
             {loadingFull && (
-              <p className="border-b border-[var(--border)] px-5 py-2 text-xs text-[var(--muted)]">正在刷新全文…</p>
+              <p className="border-b border-[var(--border)] px-5 py-2 text-xs text-[var(--muted)]">正在抓取原文正文…</p>
             )}
             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-6 md:px-8">
               {hasFullHtml ? (
