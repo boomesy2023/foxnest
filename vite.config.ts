@@ -2,12 +2,14 @@ import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 import tailwindcss from "@tailwindcss/vite";
 import { VitePWA } from "vite-plugin-pwa";
+import { rmSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 // @ts-expect-error type error without @types/node package
 import process from "node:process";
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
-export default defineConfig(() => ({
+export default defineConfig(({ mode }) => ({
   plugins: [
     react(),
     tailwindcss(),
@@ -52,6 +54,21 @@ export default defineConfig(() => ({
       },
       devOptions: { enabled: false },
     }),
+    // Tauri bundles the whole frontendDist. The APK is only useful on the
+    // deployed PWA/site, so strip it from app builds to avoid a 32MB penalty.
+    ...(mode === "app"
+      ? [
+          {
+            name: "exclude-downloads-from-app",
+            closeBundle() {
+              rmSync(fileURLToPath(new URL("./dist/downloads", import.meta.url)), {
+                recursive: true,
+                force: true,
+              });
+            },
+          },
+        ]
+      : []),
   ],
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

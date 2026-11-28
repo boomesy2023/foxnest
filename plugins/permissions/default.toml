@@ -1,0 +1,12 @@
+[default]
+description = "Default permissions for the foxnest-audio plugin"
+permissions = [
+  "allow-play",
+  "allow-pause",
+  "allow-resume",
+  "allow-seek",
+  "allow-skip",
+  "allow-set-rate",
+  "allow-stop",
+  "allow-get-state",
+]

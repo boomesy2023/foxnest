@@ -140,6 +140,28 @@ export function SettingsPanel() {
           </section>
         )}
 
+        {!isTauri() && (
+          <section className="mb-7 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4">
+            <div className="flex items-start gap-3">
+              <span className="mt-0.5 text-[var(--accent)]"><Smartphone size={18} /></span>
+              <div className="min-w-0 flex-1">
+                <h2 className="text-sm font-medium">Android 客户端</h2>
+                <p className="mt-1 text-xs text-[var(--muted)]">直接下载安装包，无需通过电脑连接手机。</p>
+                <a
+                  href="/downloads/foxnest-android-arm64-release.apk"
+                  download
+                  className="mt-3 inline-flex items-center gap-2 rounded-md bg-[var(--accent)] px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90"
+                >
+                  下载 Android APK（约 32MB）
+                </a>
+                <p className="mt-2 text-[11px] leading-relaxed text-[var(--muted)]">
+                  仅支持 Android 8.0+、arm64。首次安装时需在系统设置中允许浏览器或文件管理器“安装未知应用”。
+                </p>
+              </div>
+            </div>
+          </section>
+        )}
+
         <section>
           <h2 className="text-sm font-medium">聚合强度</h2>
           <p className="mt-1 text-xs text-[var(--muted)]">决定两篇文章被归为同一话题的严格程度</p>

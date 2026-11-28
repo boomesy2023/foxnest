@@ -1,0 +1,4 @@
+# Keep the workspace build output in the original location so Tauri's Android
+# build keeps using the existing cache instead of creating a root-level target/.
+[build]
+target-dir = "src-tauri/target"

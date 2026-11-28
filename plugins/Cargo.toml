@@ -1,0 +1,23 @@
+[package]
+name = "tauri-plugin-foxnest-audio"
+version = "0.1.0"
+authors = ["ifox"]
+description = "Background podcast playback for Foxnest"
+edition = "2024"
+rust-version = "1.90"
+links = "tauri-plugin-foxnest-audio"
+
+[dependencies]
+tauri = "2"
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }
+
+[package.metadata.platforms.support]
+android = { level = "full" }
+ios = { level = "none" }
+windows = { level = "none" }
+macos = { level = "none" }
+linux = { level = "none" }
