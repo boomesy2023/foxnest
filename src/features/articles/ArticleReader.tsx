@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState, type MouseEvent } from "react";
-import { ArrowLeft, ExternalLink, Star, RefreshCw, FileText, Headphones, StickyNote, Languages, X } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, ExternalLink, Star, RefreshCw, FileText, Headphones, StickyNote, Languages, Share2, X } from "lucide-react";
 import { openExternalUrl } from "../../lib/db";
+import { shareArticle } from "../../lib/share";
 import { useAppStore } from "../../store/useAppStore";
 import { Button } from "../../shared/ui/Button";
 import { formatDistanceToNow } from "date-fns";
 import { zhCN } from "date-fns/locale";
 import { displayHtml, displayText } from "../../lib/zhConvert";
-import { isPodcastEpisode } from "../../types";
+import { stripHtml, truncate } from "../../lib/utils";
+import { isPodcastEpisode, type Article } from "../../types";
 import { EpisodeAudio } from "../podcast/EpisodeAudio";
 import { formatClock, parseChapterTime } from "../podcast/format";
 import { usePlayerStore } from "../podcast/playerStore";
@@ -27,17 +29,20 @@ interface TranslationView {
   body: string;
 }
 
-export function ArticleReader({ onBack }: { onBack?: () => void }) {
+export function ArticleReader({ queue, onBack }: { queue: Article[]; onBack?: () => void }) {
   const settings = useAppStore((s) => s.settings);
   const convert = settings.convertTraditional;
   const selectedId = useAppStore((s) => s.selectedArticleId);
+  const selectArticle = useAppStore((s) => s.selectArticle);
   const articles = useAppStore((s) => s.articles);
   const toggleRead = useAppStore((s) => s.toggleRead);
   const toggleStarred = useAppStore((s) => s.toggleStarred);
   const fullTextLoadingId = useAppStore((s) => s.fullTextLoadingId);
   const loadFullText = useAppStore((s) => s.loadFullText);
   const addNote = useAppStore((s) => s.addNote);
+  const showToast = useAppStore((s) => s.showToast);
   const bodyRef = useRef<HTMLDivElement>(null);
+  const readerRef = useRef<HTMLElement>(null);
   const translationCache = useRef(new Map<string, TranslationView>());
   const [selectionNote, setSelectionNote] = useState<{ quote: string; x: number; y: number } | null>(null);
   const [translationPopup, setTranslationPopup] = useState<TranslationPopup | null>(null);
@@ -45,19 +50,35 @@ export function ArticleReader({ onBack }: { onBack?: () => void }) {
   const [translating, setTranslating] = useState(false);
   const [translationProgress, setTranslationProgress] = useState("");
   const [translationError, setTranslationError] = useState("");
+  const [fullTextOpen, setFullTextOpen] = useState(false);
+  const [sharing, setSharing] = useState(false);
   // Set while the pointer is down on the selection toolbar so the selectionchange
   // caused by that tap does not dismiss the toolbar before its click fires.
   const toolbarPointerDown = useRef(false);
 
   const article = articles.find((item) => item.id === selectedId);
+  const articleIndex = queue.findIndex((item) => item.id === selectedId);
+  const previousArticle = articleIndex > 0 ? queue[articleIndex - 1] : undefined;
+  const nextArticle = articleIndex >= 0 ? queue[articleIndex + 1] : undefined;
+  const isFavorite = article?.isStarred === 1;
   const translationConfigKey = `${settings.translationEngine}:${settings.translationBaseUrl}:${settings.translationModel}`;
 
   useEffect(() => {
     setSelectionNote(null);
     setTranslationPopup(null);
     setTranslationError("");
+    setFullTextOpen(false);
     setTranslationView(selectedId ? translationCache.current.get(selectedId) ?? null : null);
   }, [selectedId]);
+
+  useEffect(() => {
+    if (!fullTextOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setFullTextOpen(false);
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [fullTextOpen]);
 
   useEffect(() => {
     translationCache.current.clear();
@@ -122,6 +143,17 @@ export function ArticleReader({ onBack }: { onBack?: () => void }) {
     };
   }, []);
 
+  useEffect(() => {
+    const reader = readerRef.current;
+    if (!reader) return;
+    reader.scrollTop = 0;
+    window.getSelection()?.removeAllRanges();
+  }, [article?.id]);
+
+  const openArticle = (id: string) => {
+    selectArticle(id);
+  };
+
   if (!article) {
     return (
       <div className="flex h-full items-center justify-center text-[var(--muted)]">
@@ -135,11 +167,36 @@ export function ArticleReader({ onBack }: { onBack?: () => void }) {
 
   const loadingFull = fullTextLoadingId === article.id;
   const hasDigest = Boolean(article.contentHtml);
-  const hasFull = Boolean(article.fullContentHtml);
+  const hasFullHtml = Boolean(article.fullContentHtml);
+  const hasFull = hasFullHtml || Boolean(article.fullContent);
   const isEpisode = isPodcastEpisode(article);
-  const hasTextFallback = !hasFull && Boolean(article.fullContent);
+  const hasTextFallback = !hasFullHtml && Boolean(article.fullContent);
   const excerpt = article.content || article.summary;
   const isExcerpt = !hasFull && !hasDigest && !hasTextFallback;
+  const fullTextFailed = !hasFull && !hasTextFallback && article.fullContentFetchedAt > 0;
+
+  const fetchFullText = async (openAfterFetch = false) => {
+    translationCache.current.delete(article.id);
+    setTranslationView(null);
+    await loadFullText(article.id, true);
+    if (!openAfterFetch || useAppStore.getState().selectedArticleId !== article.id) return;
+    const updated = useAppStore.getState().articles.find((item) => item.id === article.id);
+    if (updated?.fullContentHtml || updated?.fullContent) setFullTextOpen(true);
+  };
+
+  const handleShare = async () => {
+    if (!article.link || sharing) return;
+    const title = displayText(article.title, convert);
+    const summary = truncate(stripHtml(article.summary || article.content).replace(/\s+/g, " ").trim(), 240);
+    setSharing(true);
+    try {
+      const result = await shareArticle({ title, ...(summary ? { text: summary } : {}), url: article.link });
+      if (result === "copied") showToast("文章链接已复制，可以粘贴分享");
+      if (result === "failed") showToast("分享失败，请稍后重试");
+    } finally {
+      setSharing(false);
+    }
+  };
 
   // Links inside sanitized HTML open in the system browser, never in the
   // WebView. Podcast chapter markers (#t=...) instead seek the player.
@@ -251,18 +308,6 @@ export function ArticleReader({ onBack }: { onBack?: () => void }) {
         />
       );
     }
-    if (hasFull) {
-      return (
-        <div
-          className="article-body"
-          onClick={handleBodyClick}
-          dangerouslySetInnerHTML={{ __html: displayHtml(article.fullContentHtml, convert) }}
-        />
-      );
-    }
-    if (hasTextFallback) {
-      return <p className="whitespace-pre-wrap text-[14px] leading-[1.9]">{displayText(article.fullContent, convert)}</p>;
-    }
     if (excerpt) {
       return <p className="whitespace-pre-wrap text-[14px] leading-[1.9] text-[var(--muted)]">{displayText(excerpt, convert)}</p>;
     }
@@ -275,6 +320,7 @@ export function ArticleReader({ onBack }: { onBack?: () => void }) {
 
   return (
     <article
+      ref={readerRef}
       className="h-full overflow-y-auto px-4 py-5 md:px-6 md:py-7 xl:px-8"
       onScroll={() => {
         setSelectionNote(null);
@@ -290,6 +336,17 @@ export function ArticleReader({ onBack }: { onBack?: () => void }) {
           <ArrowLeft size={15} /> 返回列表
         </button>
       )}
+      <div className="fixed right-4 top-[calc(3.75rem+env(safe-area-inset-top))] z-40 md:right-8 md:top-[4.75rem]">
+        <Button
+          size="sm"
+          variant={isFavorite ? "primary" : "outline"}
+          className="shadow-md"
+          onClick={() => void toggleStarred(article.id)}
+        >
+          <Star size={14} className={isFavorite ? "fill-amber-300 text-amber-300" : ""} />
+          {isFavorite ? "已收藏" : "收藏"}
+        </Button>
+      </div>
       {selectionNote && (
         <div
           data-note-toolbar
@@ -361,10 +418,13 @@ export function ArticleReader({ onBack }: { onBack?: () => void }) {
           )}
         </div>
       )}
-      <div className="mb-5 flex items-center gap-2 text-xs text-[var(--muted)]">
-        <span>{displayText(article.feedTitle, convert)}</span>
-        <span>·</span>
+      <h1 className="text-xl font-semibold leading-tight md:text-2xl">
+        {translationView?.title ?? displayText(article.title, convert)}
+      </h1>
+      <div className="mb-5 mt-2 flex flex-wrap items-center gap-2 text-xs text-[var(--muted)]">
         <span>{formatDistanceToNow(article.publishedAt, { addSuffix: true, locale: zhCN })}</span>
+        <span>·</span>
+        <span>{displayText(article.feedTitle, convert)}</span>
         {article.author && (
           <>
             <span>·</span>
@@ -387,9 +447,6 @@ export function ArticleReader({ onBack }: { onBack?: () => void }) {
           </>
         )}
       </div>
-      <h1 className="text-xl font-semibold leading-tight md:text-2xl">
-        {translationView?.title ?? displayText(article.title, convert)}
-      </h1>
       <div className="mt-5 flex flex-wrap gap-2">
         {settings.translationEnabled && (
           <Button
@@ -403,30 +460,52 @@ export function ArticleReader({ onBack }: { onBack?: () => void }) {
             {translating ? `翻译中 ${translationProgress}` : translationView ? "显示原文" : "全文翻译"}
           </Button>
         )}
+        <Button size="sm" variant="ghost" onClick={() => void toggleRead(article.id)}>
+          {article.isRead ? "标为未读" : "标为已读"}
+        </Button>
+        {article.link && (
+          <Button size="sm" disabled={sharing} onClick={() => void handleShare()} title="分享文章标题和链接">
+            <Share2 size={14} />
+            {sharing ? "分享中…" : "分享"}
+          </Button>
+        )}
+        {(article.link || !isEpisode) && <span className="mx-1 hidden h-5 w-px bg-[var(--border)] sm:block" />}
         {article.link && (
           <Button size="sm" onClick={() => void openExternalUrl(article.link!)}>
             <ExternalLink size={14} /> 查看原文
           </Button>
         )}
-        {article.link && !hasDigest && !isEpisode && (
-          <Button
-            size="sm"
-            variant={hasFull ? "ghost" : "primary"}
-            disabled={loadingFull}
-            onClick={() => void loadFullText(article.id, true)}
-            title={hasFull ? "重新抓取全文" : "抓取网页全文"}
-          >
-            <RefreshCw size={14} className={loadingFull ? "animate-spin" : ""} />
-            {loadingFull ? "获取全文中…" : hasFull ? "刷新全文" : "获取全文"}
-          </Button>
+        {article.link && !isEpisode && (
+          hasFull ? (
+            <>
+              <Button size="sm" variant="primary" onClick={() => setFullTextOpen(true)}>
+                <FileText size={14} /> 查看全文
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="border-[var(--accent)] text-[var(--accent)] hover:bg-[var(--accent-soft)]"
+                disabled={loadingFull}
+                onClick={() => void fetchFullText()}
+                title="重新抓取全文"
+              >
+                <RefreshCw size={14} className={loadingFull ? "animate-spin" : ""} />
+                {loadingFull ? "刷新中…" : "刷新全文"}
+              </Button>
+            </>
+          ) : (
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={loadingFull}
+              onClick={() => void fetchFullText(true)}
+              title="抓取网页全文并在弹窗中打开"
+            >
+              <RefreshCw size={14} className={loadingFull ? "animate-spin" : ""} />
+              {loadingFull ? "获取全文中…" : fullTextFailed ? "重试全文" : "获取全文"}
+            </Button>
+          )
         )}
-        <Button size="sm" variant="ghost" onClick={() => void toggleStarred(article.id)}>
-          <Star size={14} className={article.isStarred ? "fill-amber-400 text-amber-500" : ""} />
-          {article.isStarred ? "已收藏" : "收藏"}
-        </Button>
-        <Button size="sm" variant="ghost" onClick={() => void toggleRead(article.id)}>
-          {article.isRead ? "标为未读" : "标为已读"}
-        </Button>
       </div>
       {isEpisode && <EpisodeAudio article={article} />}
       <div className="mt-7 border-t border-[var(--border)] pt-6">
@@ -434,16 +513,88 @@ export function ArticleReader({ onBack }: { onBack?: () => void }) {
         {loadingFull && !hasFull && !hasDigest ? (
           <p className="text-[var(--muted)]">正在获取网页全文…</p>
         ) : (
-          <div ref={bodyRef} onMouseUp={handleBodySelection} onKeyUp={handleBodySelection}>
-            {renderBody()}
-          </div>
+          <>
+            {loadingFull && hasDigest && <p className="mb-4 text-xs text-[var(--muted)]">正在获取网页全文…</p>}
+            <div ref={bodyRef} onMouseUp={handleBodySelection} onKeyUp={handleBodySelection}>
+              {renderBody()}
+            </div>
+          </>
         )}
-        {isExcerpt && !loadingFull && !isEpisode && (
+        {(isExcerpt || fullTextFailed) && !loadingFull && !isEpisode && (
           <p className="mt-6 border-t border-[var(--border)] pt-4 text-xs text-[var(--muted)]">
-            当前为订阅源摘要。{article.fullContentFetchedAt > 0 ? "全文抓取失败，可点击「刷新全文」重试。" : "点「获取全文」在应用内阅读完整内容。"}
+            {fullTextFailed
+              ? "全文抓取失败，可点击「重试全文」再试一次。"
+              : "当前为订阅源摘要。点「获取全文」在应用内阅读完整内容。"}
           </p>
         )}
+        {(previousArticle || nextArticle) && (
+          <div className="mt-8 flex items-center justify-between gap-3 border-t border-[var(--border)] pt-5">
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={!previousArticle}
+              onClick={() => previousArticle && openArticle(previousArticle.id)}
+            >
+              <ChevronLeft size={14} /> 上一篇
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={!nextArticle}
+              onClick={() => nextArticle && openArticle(nextArticle.id)}
+            >
+              下一篇 <ChevronRight size={14} />
+            </Button>
+          </div>
+        )}
       </div>
+      {fullTextOpen && hasFull && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-3 md:p-6"
+          role="dialog"
+          aria-modal="true"
+          aria-label="文章全文"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setFullTextOpen(false);
+          }}
+        >
+          <div className="flex h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface)] shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-[var(--border)] px-5 py-4">
+              <div className="min-w-0">
+                <p className="mb-1 text-[11px] font-medium text-[var(--accent)]">全文</p>
+                <h2 className="line-clamp-2 text-base font-semibold leading-snug">
+                  {displayText(article.title, convert)}
+                </h2>
+              </div>
+              <button
+                type="button"
+                autoFocus
+                className="shrink-0 rounded-md p-2 text-[var(--muted)] hover:bg-[var(--accent-soft)]"
+                onClick={() => setFullTextOpen(false)}
+                aria-label="关闭全文"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            {loadingFull && (
+              <p className="border-b border-[var(--border)] px-5 py-2 text-xs text-[var(--muted)]">正在刷新全文…</p>
+            )}
+            <div className="min-h-0 flex-1 overflow-y-auto px-5 py-6 md:px-8">
+              {hasFullHtml ? (
+                <div
+                  className="article-body"
+                  onClick={handleBodyClick}
+                  dangerouslySetInnerHTML={{ __html: displayHtml(article.fullContentHtml, convert) }}
+                />
+              ) : (
+                <p className="whitespace-pre-wrap text-[14px] leading-[1.9]">
+                  {displayText(article.fullContent, convert)}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </article>
   );
 }

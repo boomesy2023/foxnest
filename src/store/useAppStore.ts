@@ -77,6 +77,7 @@ interface AppState {
   splitArticleFromTopic: (topicId: string, articleId: string) => Promise<void>;
   mergeTopicInto: (sourceId: string, targetId: string) => Promise<void>;
   removeTopic: (topicId: string) => Promise<void>;
+  showToast: (message: string) => void;
   clearToast: () => void;
 }
 
@@ -141,8 +142,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         });
       });
     }
-    // Podcast shownotes come from the feed; never scrape the episode page.
-    if (!article.fullContentHtml && !article.audioUrl) void get().loadFullText(id);
   },
 
   loadFullText: async (id, force = false) => {
@@ -426,8 +425,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     const article = get().articles.find((item) => item.id === id);
     if (!article) return;
     const next = article.isStarred ? 0 : 1;
-    await setArticleStarred(id, next === 1);
-    set({ articles: get().articles.map((item) => (item.id === id ? { ...item, isStarred: next } : item)) });
+    try {
+      await setArticleStarred(id, next === 1);
+      set({
+        articles: get().articles.map((item) => item.id === id ? { ...item, isStarred: next } : item),
+      });
+    } catch (error) {
+      set({ toast: `收藏失败：${errorText(error)}` });
+    }
   },
 
   addNote: async (articleId, quote) => {
@@ -607,6 +612,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
+  showToast: (message) => set({ toast: message }),
   clearToast: () => set({ toast: null }),
 }));
 

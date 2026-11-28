@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Rss, Settings as SettingsIcon, Layers, Star, ChevronDown, ChevronRight, Folder, Inbox, NotebookPen, ListFilter } from "lucide-react";
 import { useAppStore } from "./store/useAppStore";
+import { leaveArticle, useArticleHistory } from "./features/articles/readerHistory";
 import type { ArticleFilter } from "./types";
 import { cn } from "./lib/cn";
 import { ArticleList } from "./features/articles/ArticleList";
@@ -21,6 +22,7 @@ export default function App() {
   const activeFilter = useAppStore((s) => s.activeFilter);
   const selectedArticleId = useAppStore((s) => s.selectedArticleId);
   const selectArticle = useAppStore((s) => s.selectArticle);
+  useArticleHistory(selectedArticleId, () => selectArticle(null));
   const setFilter = useAppStore((s) => s.setFilter);
   const refreshAll = useAppStore((s) => s.refreshAll);
   const loading = useAppStore((s) => s.loading);
@@ -77,18 +79,21 @@ export default function App() {
   }, [feeds, activeFilter]);
 
   const visibleArticles = useMemo(() => {
-    switch (activeFilter.type) {
-      case "unread":
-        return articles.filter((a) => !a.isRead || unreadSessionReadIds.has(a.id));
-      case "feed":
-        return articles.filter((a) => a.feedId === activeFilter.id);
-      case "folder":
-        return articles.filter((a) => folderFeedIds?.has(a.feedId));
-      case "starred":
-        return articles.filter((a) => a.isStarred === 1);
-      default:
-        return articles;
-    }
+    const filtered = (() => {
+      switch (activeFilter.type) {
+        case "unread":
+          return articles.filter((a) => !a.isRead || unreadSessionReadIds.has(a.id));
+        case "feed":
+          return articles.filter((a) => a.feedId === activeFilter.id);
+        case "folder":
+          return articles.filter((a) => folderFeedIds?.has(a.feedId));
+        case "starred":
+          return articles.filter((a) => a.isStarred === 1);
+        default:
+          return articles;
+      }
+    })();
+    return [...filtered].sort((a, b) => b.publishedAt - a.publishedAt);
   }, [articles, activeFilter, folderFeedIds, unreadSessionReadIds]);
 
   // Group feeds by folder for the sidebar. Feeds without a folder stay at top level.
@@ -251,7 +256,7 @@ export default function App() {
             </div>
 
             <div className={cn("min-w-0 flex-1", selectedArticleId ? "block" : "hidden md:block")}>
-              <ArticleReader onBack={() => selectArticle(null)} />
+              <ArticleReader queue={visibleArticles} onBack={() => leaveArticle(() => selectArticle(null))} />
             </div>
           </div>
         )}
