@@ -51,16 +51,24 @@ export async function getPlaybackPosition(episodeId: string): Promise<number> {
   return map[episodeId] ?? 0;
 }
 
-export async function savePlaybackPosition(episodeId: string, seconds: number): Promise<void> {
-  if (!Number.isFinite(seconds)) return;
-  const map = { ...(await loadMap()) };
-  // A sub-second currentTime floors to 0; storing it would leave a useless
-  // entry that parseMap discards on the next read anyway.
-  const position = Math.floor(seconds);
-  if (position <= 0) delete map[episodeId];
-  else map[episodeId] = position;
-  cache = map;
-  await setSetting(PROGRESS_KEY, JSON.stringify(map));
+let writeQueue: Promise<void> = Promise.resolve();
+
+export function savePlaybackPosition(episodeId: string, seconds: number): Promise<void> {
+  if (!Number.isFinite(seconds)) return Promise.resolve();
+  // Serialize the whole read-modify-write: a timed snapshot and an episode
+  // switch can otherwise read the same cache and overwrite each other's entry.
+  const operation = writeQueue.then(async () => {
+    const map = { ...(await loadMap()) };
+    // A sub-second currentTime floors to 0; storing it would leave a useless
+    // entry that parseMap discards on the next read anyway.
+    const position = Math.floor(seconds);
+    if (position <= 0) delete map[episodeId];
+    else map[episodeId] = position;
+    cache = map;
+    await setSetting(PROGRESS_KEY, JSON.stringify(map));
+  });
+  writeQueue = operation.catch(() => undefined);
+  return operation;
 }
 
 export async function clearPlaybackPosition(episodeId: string): Promise<void> {

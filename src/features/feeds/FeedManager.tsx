@@ -135,12 +135,18 @@ export function FeedManager() {
             <form onSubmit={(event) => void submitFeed(event)} className="space-y-3 border-b border-[var(--border)] bg-[var(--accent-soft)]/20 p-4">
               <div className="grid gap-3 sm:grid-cols-2">
                 <label className="block text-xs text-[var(--muted)] sm:col-span-2">
-                  订阅地址
+                  {kind === "rss" ? "订阅地址" : "订阅标识"}
                   <Input
                     className="mt-1"
                     value={url}
                     onChange={(event) => setUrl(event.target.value)}
-                    placeholder="https://example.com/feed.xml"
+                    placeholder={
+                      kind === "rss"
+                        ? "https://example.com/feed.xml"
+                        : kind === "miniflux"
+                          ? "源 ID，如 42（仅作标识）"
+                          : "订阅地址（仅作标识）"
+                    }
                     autoFocus
                     required
                   />

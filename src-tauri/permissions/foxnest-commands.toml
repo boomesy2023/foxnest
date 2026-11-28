@@ -18,6 +18,7 @@ commands.allow = [
   "save_translation_api_key",
   "get_translation_api_key",
   "delete_translation_api_key",
+  "share_text",
 ]
 
 [[permission]]

@@ -23,6 +23,13 @@ struct VerifiedFeed {
 /// restart does not force verification again.
 static VERIFIED_CACHE: OnceLock<Mutex<HashMap<String, VerifiedFeed>>> = OnceLock::new();
 static VERIFIED_PATH: OnceLock<PathBuf> = OnceLock::new();
+/// The exact feed URL the main window asked to verify. The verification WebView
+/// may only hand back content for this URL, and the request is consumed once.
+static PENDING_VERIFICATION: OnceLock<Mutex<Option<String>>> = OnceLock::new();
+
+fn pending_verification() -> &'static Mutex<Option<String>> {
+    PENDING_VERIFICATION.get_or_init(|| Mutex::new(None))
+}
 
 const VERIFIED_TTL_SECS: u64 = 12 * 60 * 60;
 const CREDENTIAL_SERVICE: &str = "com.ifox.foxnest.feed-tokens";
@@ -311,8 +318,24 @@ async fn post_json(
 
 /// Store feed content captured inside the verification WebView.
 #[tauri::command]
-fn save_verified_feed(app: AppHandle, url: String, body: String) -> Result<(), String> {
-    // This command is reachable from a remote origin, so never trust the payload.
+fn save_verified_feed(
+    window: WebviewWindow,
+    app: AppHandle,
+    url: String,
+    body: String,
+) -> Result<(), String> {
+    // This command is reachable from a remote origin, so never trust the caller
+    // or the payload. Only the isolated verification WebView may invoke it.
+    if window.label() != "verification" {
+        return Err("verified feeds can only be saved from the verification window".into());
+    }
+    {
+        let mut pending = pending_verification().lock().unwrap();
+        if pending.as_deref() != Some(url.as_str()) {
+            return Err("verified feed does not match the pending verification request".into());
+        }
+        *pending = None;
+    }
     if !url.starts_with("https://") && !url.starts_with("http://") {
         return Err("invalid feed URL".into());
     }
@@ -366,6 +389,7 @@ fn close_verification_window(app: AppHandle) -> Result<(), String> {
     if let Some(window) = app.get_webview_window("verification") {
         window.destroy().map_err(|e| e.to_string())?;
     }
+    *pending_verification().lock().unwrap() = None;
     Ok(())
 }
 
@@ -387,6 +411,7 @@ async fn open_verification_window(
     if let Some(window) = app.get_webview_window("verification") {
         let _ = window.destroy();
     }
+    *pending_verification().lock().unwrap() = Some(feed_url.clone());
 
     let parsed = reqwest::Url::parse(&site_url).map_err(|e| format!("invalid site URL: {e}"))?;
     let feed_literal = serde_json::to_string(&feed_url).map_err(|e| e.to_string())?;
@@ -434,6 +459,104 @@ async fn open_verification_window(
     Ok(())
 }
 
+#[tauri::command]
+fn share_text(app: AppHandle, text: String) -> Result<(), String> {
+    #[cfg(target_os = "android")]
+    {
+        use std::sync::mpsc;
+        use std::time::Duration;
+        use tauri::Manager;
+
+        let window = app
+            .get_webview_window("main")
+            .ok_or_else(|| "main window is not available".to_string())?;
+        let (tx, rx) = mpsc::channel();
+        window
+            .with_webview(move |webview| {
+                webview.jni_handle().exec(move |env, activity, _| {
+                    let _ = tx.send(android_share_text(env, activity, &text));
+                });
+            })
+            .map_err(|error| error.to_string())?;
+        rx.recv_timeout(Duration::from_secs(10))
+            .map_err(|_| "timed out while opening the Android share sheet".to_string())?
+    }
+
+    #[cfg(not(target_os = "android"))]
+    {
+        let _ = (app, text);
+        Err("current platform does not support the native share sheet".into())
+    }
+}
+
+#[cfg(target_os = "android")]
+fn android_share_text(
+    env: &mut jni::JNIEnv,
+    activity: &jni::objects::JObject,
+    text: &str,
+) -> Result<(), String> {
+    use jni::objects::{JObject, JValue};
+
+    let intent_class = env
+        .find_class("android/content/Intent")
+        .map_err(|error| error.to_string())?;
+    let intent = env
+        .new_object(&intent_class, "()V", &[])
+        .map_err(|error| error.to_string())?;
+    let action = env
+        .new_string("android.intent.action.SEND")
+        .map_err(|error| error.to_string())?;
+    env.call_method(
+        &intent,
+        "setAction",
+        "(Ljava/lang/String;)Landroid/content/Intent;",
+        &[(&action).into()],
+    )
+    .map_err(|error| error.to_string())?;
+
+    let mime_type = env
+        .new_string("text/plain")
+        .map_err(|error| error.to_string())?;
+    env.call_method(
+        &intent,
+        "setType",
+        "(Ljava/lang/String;)Landroid/content/Intent;",
+        &[(&mime_type).into()],
+    )
+    .map_err(|error| error.to_string())?;
+
+    let extra = env
+        .new_string("android.intent.extra.TEXT")
+        .map_err(|error| error.to_string())?;
+    let share_text = env.new_string(text).map_err(|error| error.to_string())?;
+    env.call_method(
+        &intent,
+        "putExtra",
+        "(Ljava/lang/String;Ljava/lang/CharSequence;)Landroid/content/Intent;",
+        &[(&extra).into(), (&share_text).into()],
+    )
+    .map_err(|error| error.to_string())?;
+
+    let chooser = env
+        .call_static_method(
+            &intent_class,
+            "createChooser",
+            "(Landroid/content/Intent;Ljava/lang/CharSequence;)Landroid/content/Intent;",
+            &[(&intent).into(), JValue::Object(&JObject::default())],
+        )
+        .map_err(|error| error.to_string())?
+        .l()
+        .map_err(|error| error.to_string())?;
+    env.call_method(
+        activity,
+        "startActivity",
+        "(Landroid/content/Intent;)V",
+        &[(&chooser).into()],
+    )
+    .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -441,6 +564,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_sql::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_foxnest_audio::init())
         .invoke_handler(tauri::generate_handler![
             fetch_url,
             post_json,
@@ -454,7 +578,8 @@ pub fn run() {
             delete_feed_token,
             save_translation_api_key,
             get_translation_api_key,
-            delete_translation_api_key
+            delete_translation_api_key,
+            share_text
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -64,10 +64,11 @@ async function persist(articles: SavedArticle[], feed: Feed): Promise<{ added: n
 export async function refreshMiniflux(feed: Feed): Promise<RefreshResult> {
   try {
     const token = await requireApiToken(feed);
-    const base = (feed.apiBase ?? "").replace(/\/$/, "");
-    const target = feed.url.startsWith("http")
-      ? feed.url
-      : `${base}/v1/entries?limit=200&order=desc&direction=desc`;
+    const base = (feed.apiBase ?? "").replace(/\/+$/, "");
+    if (!base) throw new Error("未配置服务地址，请删除并重新添加订阅源");
+    // feed.url is a local identifier only. Sending the token to it would leak
+    // credentials to an arbitrary user-supplied host.
+    const target = `${base}/v1/entries?limit=200&order=desc&direction=desc`;
     const result = await fetchUrl(target, { "X-Auth-Token": token }, 25);
     if (result.status >= 400) {
       return { added: 0, duplicates: 0, total: 0, error: `HTTP ${result.status}` };
@@ -113,7 +114,8 @@ export async function refreshMiniflux(feed: Feed): Promise<RefreshResult> {
 export async function refreshFreshRss(feed: Feed): Promise<RefreshResult> {
   try {
     const token = await requireApiToken(feed);
-    const base = (feed.apiBase ?? "").replace(/\/$/, "");
+    const base = (feed.apiBase ?? "").replace(/\/+$/, "");
+    if (!base) throw new Error("未配置服务地址，请删除并重新添加订阅源");
     const headers = { Authorization: `GoogleLogin auth=${token}` };
     const streamUrl = `${base}/reader/api/0/stream/contents/${encodeURIComponent(feed.url)}?n=200&xt=`;
     const result = await fetchUrl(streamUrl, headers, 25);
